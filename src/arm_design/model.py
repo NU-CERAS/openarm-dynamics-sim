@@ -71,7 +71,10 @@ def structure(link):
 def motor_part(c, i, position, rotation):
     j = c['joints'][i]
     m = c['motors'][j['motor']]
-    mass, radius, depth = m['mass_kg'], m['diameter_m']/2, m['depth_m']
+    mass = j.get('motor_mass_override_kg')
+    if mass is None:
+        mass = m['mass_kg']
+    radius, depth = m['diameter_m']/2, m['depth_m']
     R = rotation @ align_z(j['axis'])
     I = np.diag([mass*(3*radius**2+depth**2)/12]*2 + [mass*radius**2/2])
     return (mass, position, R@I@R.T), R, radius, depth

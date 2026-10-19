@@ -40,6 +40,7 @@ Reload YAML after changing a motor assignment or rating to update the charts.
 | **Jog speed (deg/s)** | Maximum target slew rate during manual jogging |
 | **Zero arm** | Set all seven targets to 0° and move at jog speed |
 | **Randomize joints** | Pick each target within its joint limits and move at jog speed |
+| **Link lengths / weights** | Edit all seven lengths and structural masses, end-effector mass, and payload in one dialog |
 | **Save A position / Save B position** | Capture actual angles and immediately save that pose to YAML |
 | **Go to A / Go to B** | Smoothly move from the current pose to the stored pose, under motor torque limits |
 | **Move duration (s)** | Duration of Go-to moves and the A → B sweep segment |
@@ -85,6 +86,29 @@ A/B to save poses, Enter to sweep, [/] for duration, Space to pause, X to stop,
 F5 to reload, F8 to save controls, E to edit YAML, and P for the report.
 
 ## Parameters to tune
+
+For quick changes, click **Link lengths / weights** in the window. Lengths are in
+millimeters; masses are in kilograms. **Auto mass** estimates hollow aluminum
+tubes plus brackets using the YAML dimensions; it is not a solid-link estimate.
+Uncheck it to enter a measured or CAD structural mass (motor weight is separate).
+For solid aluminum, mass is volume times density: using 2700 kg/m³, a
+100 × 40 × 40 mm solid bar is 0.432 kg, while a 100 × 30 × 8 mm solid plate is
+0.0648 kg, before brackets, holes, or machining. A manual mass alone does not
+replace the estimated COM/inertia; use CAD overrides when available.
+
+The same editor has **Actuator masses (kg)** for J1–J7 independently, even when
+several joints share a motor model. These update motor housing mass and inertia;
+they do not change torque ratings, dimensions, controller gains, or rotor armature.
+**Use catalog motor masses** resets all seven to the selected motor models' masses.
+Overrides are saved as each joint's `motor_mass_override_kg`; `null` uses the catalog.
+J1's housing is fixed to the base; J2–J7 housings load their upstream links.
+
+**Apply** rebuilds the simulation temporarily; **Apply + save** also writes these
+geometry/mass fields to YAML. Applying keeps the current joint angles, clears
+velocity and chart history, and pauses physics. Close the dialog and press
+**Resume** or run a sweep. A/B poses and controller gains are preserved. Existing
+CAD COM/inertia overrides remain fixed and must be updated separately in YAML.
+**Save controls** does not save geometry; use **Apply + save** for these edits.
 
 Motor assignment: **J1–J2: RobStride 03; J3–J4: RobStride 06; J5–J7: RobStride 02**.
 Each assignment selects that model's mass, housing dimensions, torque ratings,
