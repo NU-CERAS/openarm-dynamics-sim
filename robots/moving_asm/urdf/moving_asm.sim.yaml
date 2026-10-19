@@ -7,7 +7,7 @@
 model_type: urdf
 name: CAD arm / RobStride / 7 links
 urdf:
-  path: moving_asm.urdf
+  path: /Users/bradylin/Documents/Projects/Club & Lab/openarm-dynamics-sim/robots/moving_asm/urdf/moving_asm.urdf
   package_roots: []
   tip_link: part_7
   tip_offset_m:
@@ -132,13 +132,13 @@ sweep:
   - 0.0
   - 0.0
   b_deg:
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
+  - 61.29999923728751
+  - 83.19999694807836
+  - 28.60000038160677
+  - 20.50000000044304
+  - -31.39999961796331
+  - -25.899999618380953
+  - 99.50000001309338
   duration_s: 3.0
   approach_s: 2.0
   settle_s: 1.0
