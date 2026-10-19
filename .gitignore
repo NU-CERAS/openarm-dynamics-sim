@@ -6,4 +6,6 @@ __pycache__/
 .DS_Store
 results/
 .streamlit/secrets.toml
+robots/**/*.sim.yaml
+!robots/moving_asm/urdf/moving_asm.sim.yaml
 

@@ -97,6 +97,9 @@ class Arm:
 
 def build_arm(c):
     validate(c)
+    if c.get('model_type') == 'urdf':
+        from .urdf import build_urdf_arm
+        return build_urdf_arm(c)
     root = ET.Element('mujoco', model=c['name'])
     element(root, 'compiler', angle='radian', autolimits='true')
     element(root, 'option', timestep=c['simulation']['step_s'], gravity=c['gravity_m_s2'], integrator='implicitfast')

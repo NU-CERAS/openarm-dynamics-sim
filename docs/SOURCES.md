@@ -26,6 +26,11 @@ These manufacturer pages supply the numeric properties in the `motors` section o
 | [03](https://robstride.com/products/robStride03) | 0.880 | 20 | 60 | 100 | 195 | 9 |
 | [02](https://robstride.com/products/robStride02) | 0.405 | 6 | 17 | 100 | 410 | 7.75 |
 | [06](https://robstride.com/products/robStride06) | 0.621 | 11 | 36 | 100 | 480 | 9 |
+| [00](https://robstride.com/products/robStride00) | 0.310 | 5 | 14 | 100 | 315 | 10 |
+
+RobStride 00 specifications checked on 2026-10-19: 48 V nominal, 57 × 57 × 51 mm.
+The user corrected J5/J6/J7 to model 00. Both the generated arm and imported CAD
+arm now use the 00 ratings there. The 02 catalog entry is retained for reference.
 
 These are nominal 48 V data. Standard 02 is assumed, not 02 IP67. No-load speed is
 not a loaded speed guarantee. The dimensions used to approximate cylindrical
@@ -51,9 +56,26 @@ verified. The configured proxies are identified as assumptions in all reports.
 ## User-supplied design
 
 The user supplied a seven-span sketch with dimensions 100, 100, 125, 100, 70, 75,
-70 (interpreted as millimeters), corrected actuator assignment 03/03/06/06/02/02/02, and the
+70 (interpreted as millimeters), corrected actuator assignment 03/03/06/06/00/00/00, and the
 OpenArm v1.1 joint arrangement. The original image remains in the user's Downloads;
 it is not required to run this repository. Payload, task, tube section, bracket
 mass, gripper mass/COM, gravity mounting, and custom translation directions are
 explicit preliminary assumptions. See `configs/arm.yaml` and `docs/MODEL.md`.
+
+The replacement `robots/moving_asm/urdf/moving_asm.urdf` includes the user's
+seven-link Onshape CAD and local mesh files. The real J7 drives `part_7` on the
+final `rs00_1` housing, which remains fixed to `part_6`. All exported joint origins,
+axes, mesh geometry, and structural link inertial data are retained. `part_7`
+weighs 0.427991 kg and uses its exported COM and full inertia tensor. This replaces
+the prior model's provisional box; no additional end-effector mass is added.
+The reported tip is initially the `part_7` link origin, configurable through
+`urdf.tip_offset_m` when a measured tool-tip location is available.
+
+All three imported RS00 housing masses were corrected from the CAD's 0.000127908
+kg to the catalog 0.310 kg; their six inertia components were scaled by the mass
+ratio with the CAD COM retained. This is a uniform-density approximation, not a
+measured motor inertia. Both RS06 housing masses were subsequently corrected
+from 0.000238549 kg to the catalog 0.621 kg, using the same proportional inertia
+scaling and retaining the CAD COM. Other CAD link properties are retained. The
+compiled replacement arm totals 7.446340 kg, including the real seventh link.
 

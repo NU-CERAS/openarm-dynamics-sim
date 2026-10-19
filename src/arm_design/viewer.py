@@ -40,6 +40,9 @@ class Window:
         self.camera.lookat[:] = [0,0,.45]
         self.camera.distance = 1.5
         self.camera.azimuth, self.camera.elevation = 135,-15
+        if self.experiment.cfg.get('model_type') == 'urdf':
+            self.camera.lookat[:] = self.experiment.arm.model.stat.center
+            self.camera.distance = max(.4, self.experiment.arm.model.stat.extent*1.8)
         self.option = mujoco.MjvOption()
         self.scene = self.context = None
         self.drag_button = None
@@ -63,6 +66,7 @@ class Window:
     def reload(self):
         self.experiment.idle_required()
         self.experiment.load()
+        self.selected = min(self.selected,len(self.experiment.cfg['joints'])-1)
         self.reload_requested = True
         self.experiment.message = 'Reloaded YAML. Initialized at saved pose A.'
 
@@ -156,7 +160,7 @@ class Window:
         elif key == glfw.KEY_F8:
             self.act(e.save_settings)
         elif not e.busy:
-            if glfw.KEY_1 <= key <= glfw.KEY_7:
+            if glfw.KEY_1 <= key <= min(glfw.KEY_9,glfw.KEY_1+len(e.cfg['joints'])-1):
                 self.selected = key-glfw.KEY_1
             elif key in (glfw.KEY_UP,glfw.KEY_DOWN):
                 j = e.cfg['joints'][self.selected]
@@ -204,7 +208,10 @@ class Window:
         imgui.set_next_window_size((PANEL_WIDTH,height))
         flags = imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_resize | imgui.WindowFlags_.no_collapse | imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_saved_settings
         imgui.begin('Arm controls',flags=flags)
-        imgui.text('OpenArm / MuJoCo')
+        imported = e.cfg.get('model_type') == 'urdf'
+        imgui.text_wrapped(e.cfg['name']+' / MuJoCo')
+        if imported:
+            imgui.text_wrapped('URDF: '+Path(e.cfg['urdf']['path']).name)
         imgui.text_colored((.4,.8,1,1),e.state)
         imgui.begin_disabled(e.busy)
         if imgui.button('Save A position',(171,30)): self.act(e.save_pose,'A')
@@ -230,10 +237,14 @@ class Window:
         if changed: self.act(e.set_jog_speed,value)
         imgui.text_disabled('Duration applies to Go-to and A -> B.')
         imgui.text_disabled('Save A/B writes actual angles to YAML.')
-        if imgui.button('Link lengths / weights',(350,30)):
-            self.geometry_draft=e.geometry_settings()
-            imgui.open_popup('Link lengths / weights')
-        self.geometry_popup()
+        if imported:
+            imgui.text_wrapped('Geometry and inertia come from the URDF. Edit it, then Reload YAML to reimport.')
+            if imgui.button('Edit source URDF',(350,30)): open_editor(Path(e.cfg['urdf']['path']))
+        else:
+            if imgui.button('Link lengths / weights',(350,30)):
+                self.geometry_draft=e.geometry_settings()
+                imgui.open_popup('Link lengths / weights')
+            self.geometry_popup()
         imgui.separator()
         imgui.text('Joint targets (degrees)')
         if imgui.button('Zero arm',(171,28)): self.act(e.zero_arm)
@@ -241,14 +252,17 @@ class Window:
         if imgui.button('Randomize joints',(171,28)): self.act(e.randomize_joints)
         for i,j in enumerate(e.cfg['joints']):
             imgui.push_id(i)
-            imgui.set_next_item_width(290)
+            # Imported joint names can be much longer than J1/J2.
+            label_width = imgui.calc_text_size(j['name']).x + imgui.get_style().item_inner_spacing.x
+            imgui.set_next_item_width(max(120, min(290, imgui.get_content_region_avail().x-label_width)))
             changed,value = imgui.slider_float(j['name'],float(np.rad2deg(e.target[i])),*j['limits_deg'],format='%.1f deg')
             if changed: self.act(e.set_target,i,value)
             imgui.pop_id()
         imgui.text_disabled('Ctrl-click a slider to type an exact angle.')
         if imgui.collapsing_header('Advanced: per-joint P / D'):
             imgui.set_next_item_width(170)
-            _,self.selected = imgui.combo('Motor',self.selected,[j['name']+' / RobStride '+j['motor'] for j in e.cfg['joints']])
+            _,self.selected = imgui.combo('Joint' if imported else 'Motor',self.selected,
+                                        [j['name'] if imported else j['name']+' / RobStride '+j['motor'] for j in e.cfg['joints']])
             j=e.cfg['joints'][self.selected]
             imgui.set_next_item_width(170)
             changed,p = imgui.input_float('P (Nm/rad)',j['kp_nm_rad'],5,20,'%.2f')
@@ -256,7 +270,7 @@ class Window:
             imgui.set_next_item_width(170)
             changed,d = imgui.input_float('D (Nm s/rad)',j['kd_nm_s_rad'],1,5,'%.2f')
             if changed: self.act(e.set_gains,self.selected,j['kp_nm_rad'],d)
-            imgui.text_wrapped('Applied live. Simulation PD gains, not firmware PID settings. Keep gains fixed when comparing link lengths.')
+            imgui.text_wrapped('Applied live. Simulation PD gains, not firmware PID settings. Keep gains fixed when comparing models.')
         if imgui.button('Save controls',(171,28)): self.act(e.save_settings)
         imgui.same_line()
         if imgui.button('Reload YAML',(171,28)): self.act(self.reload)
@@ -294,7 +308,7 @@ class Window:
         # shares that context instead of requiring an incompatible core profile.
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR,2)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR,1)
-        window=glfw.create_window(1280,900,'OpenArm - MuJoCo',None,None)
+        window=glfw.create_window(1280,900,self.experiment.cfg['name']+' - MuJoCo',None,None)
         if not window:
             glfw.terminate();raise RuntimeError('Could not create the MuJoCo window.')
         glfw.set_window_size_limits(window,1180,780,glfw.DONT_CARE,glfw.DONT_CARE)

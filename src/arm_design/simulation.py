@@ -29,7 +29,7 @@ def torque_limit(c, qvel, rated=False):
 def control(arm, d, target, velocity=None):
     """Output-side position PD + optional gravity feedforward, all force-limited."""
     m, c = arm.model, arm.cfg
-    velocity = np.zeros(7) if velocity is None else velocity
+    velocity = np.zeros(m.nv) if velocity is None else velocity
     # Compute gravity at the current position with zero velocity on separate data.
     # qfrc_applied is never used: compensation consumes the same motor torque budget.
     if c['drive']['gravity_compensation']:
@@ -41,7 +41,7 @@ def control(arm, d, target, velocity=None):
         mujoco.mj_fwdVelocity(m, gd)
         gravity = gd.qfrc_bias.copy()
     else:
-        gravity = np.zeros(7)
+        gravity = np.zeros(m.nv)
     kd = np.array([j['kd_nm_s_rad'] for j in c['joints']])
     m.actuator_biasprm[:, 0] = gravity + kd*velocity
     cap = torque_limit(c, d.qvel)
@@ -93,7 +93,7 @@ class Sweep:
             q, v = smooth_move(self.start_q, self.a, t, s['approach_s'])
             phase = 'approach'
         elif t + 1e-9 < self.sweep_start:
-            q, v, phase = self.a, np.zeros(7), 'settle'
+            q, v, phase = self.a, np.zeros_like(self.a), 'settle'
         elif t + 1e-9 < self.sweep_end:
             if not self.checked_start:
                 self.checked_start = True
@@ -104,7 +104,7 @@ class Sweep:
             q, v = smooth_move(self.a, self.b, t-self.sweep_start, s['duration_s'])
             phase = 'sweep'
         else:
-            q, v, phase = self.b, np.zeros(7), 'hold'
+            q, v, phase = self.b, np.zeros_like(self.b), 'hold'
         row = step(arm, data, q, v)
         row['time_s'] = t
         row['phase'] = phase

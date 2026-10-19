@@ -48,6 +48,8 @@ class Experiment:
             raise ValueError('Stop or finish the current move first.')
 
     def geometry_settings(self):
+        if self.cfg.get('model_type') == 'urdf':
+            return None
         return dict(links=[{k:link[k] for k in ('length_mm','mass_override_kg')}
                            for link in self.cfg['links']],
                     tool_mass_kg=self.cfg['tool']['mass_kg'],
