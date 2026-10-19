@@ -1,0 +1,319 @@
+# MuJoCo arm parameters. Units are in field names; joint angles here are degrees.
+# Links are J1->J2, ..., J6->J7, J7->tool. All dimensions are preliminary.
+# Each link defaults to a hollow aluminum tube + a bracket at its joint.
+# mass_override_kg replaces tube+bracket mass, excluding motors/tool/payload.
+# com_override_m is in that joint frame; inertia_override_kg_m2 is [Ixx,Iyy,Izz,Ixy,Ixz,Iyz]
+# about the overridden COM, expressed in that joint frame. null = estimated.
+# Edit and save, then click Reload YAML. Save A/B buttons persist poses; Save controls persists gains/speeds.
+name: Custom OpenArm v1.1-style / RobStride
+geometry_status: sketch-derived; axes from v1 URDF; not validated against v1.1 CAD
+base_xyz_m:
+- 0
+- 0
+- 0.75
+base_rpy_deg:
+- -90
+- 0
+- 0
+gravity_m_s2:
+- 0
+- 0
+- -9.81
+motors:
+  '03':
+    mass_kg: 0.88
+    diameter_m: 0.106
+    depth_m: 0.056
+    rated_torque_nm: 20.0
+    peak_torque_nm: 60.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 195.0
+    gear_ratio: 9.0
+    source: https://robstride.com/products/robStride03
+  '02':
+    mass_kg: 0.405
+    diameter_m: 0.0785
+    depth_m: 0.0455
+    rated_torque_nm: 6.0
+    peak_torque_nm: 17.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 410.0
+    gear_ratio: 7.75
+    source: https://robstride.com/products/robStride02
+  '06':
+    mass_kg: 0.621
+    diameter_m: 0.088
+    depth_m: 0.049
+    rated_torque_nm: 11.0
+    peak_torque_nm: 36.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 480.0
+    gear_ratio: 9.0
+    source: https://robstride.com/products/robStride06
+joints:
+- name: J1
+  motor: '03'
+  axis:
+  - 0
+  - 0
+  - 1
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - -200
+  - 80
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+  friction_nm: 0.05
+  damping_nm_s_rad: 0.02
+  armature_kg_m2: 0.0
+- name: J2
+  motor: '03'
+  axis:
+  - -1
+  - 0
+  - 0
+  origin_rpy_deg:
+  - -90
+  - 0
+  - 0
+  limits_deg:
+  - -190
+  - 10
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+  friction_nm: 0.05
+  damping_nm_s_rad: 0.02
+  armature_kg_m2: 0.0
+- name: J3
+  motor: '06'
+  axis:
+  - 0
+  - 0
+  - 1
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - -90
+  - 90
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+  friction_nm: 0.04
+  damping_nm_s_rad: 0.01
+  armature_kg_m2: 0.0
+- name: J4
+  motor: '06'
+  axis:
+  - 0
+  - 1
+  - 0
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - 0
+  - 140
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+  friction_nm: 0.04
+  damping_nm_s_rad: 0.01
+  armature_kg_m2: 0.0
+- name: J5
+  motor: '02'
+  axis:
+  - 0
+  - 0
+  - 1
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - -90
+  - 90
+  kp_nm_rad: 60
+  kd_nm_s_rad: 6
+  friction_nm: 0.03
+  damping_nm_s_rad: 0.01
+  armature_kg_m2: 0.0
+- name: J6
+  motor: '02'
+  axis:
+  - 1
+  - 0
+  - 0
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - -45
+  - 45
+  kp_nm_rad: 60
+  kd_nm_s_rad: 6
+  friction_nm: 0.03
+  damping_nm_s_rad: 0.01
+  armature_kg_m2: 0.0
+- name: J7
+  motor: '02'
+  axis:
+  - 0
+  - -1
+  - 0
+  origin_rpy_deg:
+  - 0
+  - 0
+  - 0
+  limits_deg:
+  - -90
+  - 90
+  kp_nm_rad: 60
+  kd_nm_s_rad: 6
+  friction_nm: 0.03
+  damping_nm_s_rad: 0.01
+  armature_kg_m2: 0.0
+links:
+- length_mm: 100
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 100
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 125
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 100
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 70
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 75
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+- length_mm: 70
+  direction:
+  - 0
+  - 0
+  - 1
+  outer_mm: 40
+  wall_mm: 2
+  density_kg_m3: 2700
+  bracket_mass_kg: 0.1
+  bracket_radius_m: 0.025
+  mass_override_kg: null
+  com_override_m: null
+  inertia_override_kg_m2: null
+tool:
+  mass_kg: 0.4
+  com_fraction_of_last_span: 0.7
+  box_size_m:
+  - 0.06
+  - 0.06
+  - 0.08
+payload:
+  mass_kg: 0.5
+  com_offset_from_tip_m:
+  - 0
+  - 0
+  - 0.05
+  box_size_m:
+  - 0.06
+  - 0.06
+  - 0.06
+drive:
+  torque_derating: 0.8
+  speed_envelope: true
+  gravity_compensation: true
+simulation:
+  step_s: 0.001
+  contacts: false
+  floor_z_m: 0.0
+sweep:
+  a_deg:
+  - -87.6068022576544
+  - -1.3042562576820453e-06
+  - 3.005786887199384e-14
+  - 0.0002578592599402494
+  - 1.604204584522697e-14
+  - -5.852222103443767e-10
+  - -8.306639229804471e-06
+  b_deg:
+  - 79.98276674003472
+  - -2.028126027973226e-07
+  - 1.1014207942017845e-13
+  - 0.0010311096624017646
+  - 1.8378891688866535e-13
+  - -2.0455312102081424e-10
+  - 0.003972287507719472
+  duration_s: 3.0
+  approach_s: 3.0
+  settle_s: 1.0
+  hold_s: 1.0
+  tracking_tolerance_deg: 2.0
+  jog_speed_deg_s: 30.0
