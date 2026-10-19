@@ -1,8 +1,10 @@
 """Window-independent experiment actions, shared by buttons and shortcuts."""
 from collections import deque
+from copy import deepcopy
 from pathlib import Path
+import mujoco
 import numpy as np
-from .config import load_config, save_controls
+from .config import load_config, save_controls, merge_geometry
 from .model import build_arm
 from .simulation import Sweep, smooth_move, step
 from .reporting import save_result, summary
@@ -44,6 +46,33 @@ class Experiment:
     def idle_required(self):
         if self.busy:
             raise ValueError('Stop or finish the current move first.')
+
+    def geometry_settings(self):
+        return dict(links=[{k:link[k] for k in ('length_mm','mass_override_kg')}
+                           for link in self.cfg['links']],
+                    tool_mass_kg=self.cfg['tool']['mass_kg'],
+                    payload_mass_kg=self.cfg['payload']['mass_kg'],
+                    motor_mass_overrides_kg={j['name']:j.get('motor_mass_override_kg')
+                                             for j in self.cfg['joints']})
+
+    def apply_geometry(self, geometry, save=False):
+        self.idle_required()
+        config = deepcopy(self.cfg)
+        merge_geometry(config,geometry)
+        # Construct and validate before replacing the working model or saving.
+        arm = build_arm(config)
+        data = arm.data()
+        data.qpos[:] = self.data.qpos
+        data.ctrl[:] = data.qpos
+        mujoco.mj_forward(arm.model,data)
+        if save:
+            save_controls(self.path,geometry=geometry)
+        self.arm,self.cfg,self.data = arm,config,data
+        self.target = data.qpos.copy()
+        self.command = self.target.copy()
+        self.history.clear()
+        self.paused = True
+        self.message = ('Applied and saved' if save else 'Applied (not saved)') + ' lengths and masses. Paused at current angles; Resume to simulate.'
 
     def set_duration(self, value):
         self.idle_required()

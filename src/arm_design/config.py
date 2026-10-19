@@ -38,6 +38,8 @@ def validate(c):
         positive(j['kd_nm_s_rad'], 'kd_nm_s_rad', zero=True)
         for k in ('friction_nm', 'damping_nm_s_rad', 'armature_kg_m2'):
             positive(j[k], k, zero=True)
+        if j.get('motor_mass_override_kg') is not None:
+            positive(j['motor_mass_override_kg'], 'motor_mass_override_kg')
         motor = c['motors'][j['motor']]
         for k in ('mass_kg', 'diameter_m', 'depth_m', 'rated_torque_nm', 'peak_torque_nm', 'rated_speed_rpm', 'no_load_speed_rpm'):
             positive(motor[k], k)
@@ -98,7 +100,23 @@ def save_sweep(path, sweep):
     save_controls(path, sweep)
 
 
-def save_controls(path, sweep_updates=None, gains=None):
+def merge_geometry(c, geometry):
+    if len(geometry['links']) != 7:
+        raise ValueError('Exactly seven link settings are required')
+    for link, edit in zip(c['links'],geometry['links']):
+        for key in ('length_mm','mass_override_kg'):
+            link[key] = edit[key]
+    c['tool']['mass_kg'] = geometry['tool_mass_kg']
+    c['payload']['mass_kg'] = geometry['payload_mass_kg']
+    if 'motor_mass_overrides_kg' in geometry:
+        overrides = geometry['motor_mass_overrides_kg']
+        if set(overrides) != {j['name'] for j in c['joints']}:
+            raise ValueError('Joint names changed; reload before saving actuator masses')
+        for joint in c['joints']:
+            joint['motor_mass_override_kg'] = overrides[joint['name']]
+
+
+def save_controls(path, sweep_updates=None, gains=None, geometry=None):
     """Merge only requested controls into the latest file; keep geometry edits."""
     path = Path(path)
     c = load_config(path)
@@ -109,6 +127,8 @@ def save_controls(path, sweep_updates=None, gains=None):
             raise ValueError('Joint names changed on disk; reload before saving gains')
         for j in c['joints']:
             j.update(gains[j['name']])
+    if geometry is not None:
+        merge_geometry(c,geometry)
     validate(c)
     # Keep the explanatory header; safe_dump preserves values, not inline comments.
     header = []

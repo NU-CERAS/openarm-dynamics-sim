@@ -14,6 +14,7 @@ import yaml
 import mujoco
 import numpy as np
 from .experiment import Experiment
+from .model import structure
 from .torque_charts import chart_width, draw_torque_charts
 
 PANEL_WIDTH = 380
@@ -33,6 +34,7 @@ class Window:
     def __init__(self, config_path, out):
         self.experiment = Experiment(config_path,out)
         self.selected = 0
+        self.geometry_draft = self.experiment.geometry_settings()
         self.camera = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(self.camera)
         self.camera.lookat[:] = [0,0,.45]
@@ -67,6 +69,72 @@ class Window:
     def report(self):
         if self.experiment.last_report:
             webbrowser.open(self.experiment.last_report.as_uri())
+
+    def apply_geometry(self, save):
+        self.experiment.apply_geometry(self.geometry_draft,save=save)
+        self.reload_requested = True
+
+    def geometry_popup(self):
+        imgui.set_next_window_size((540,0))
+        opened,_ = imgui.begin_popup_modal('Link lengths / weights',flags=imgui.WindowFlags_.always_auto_resize)
+        if not opened:
+            return
+        e=self.experiment
+        imgui.text_wrapped('Link mass includes tube and bracket, excluding motors. End effector and carried payload are separate.')
+        imgui.separator()
+        imgui.text('Link');imgui.same_line(110);imgui.text('Length (mm)')
+        imgui.same_line(245);imgui.text('Mass (kg)')
+        imgui.begin_disabled(e.busy)
+        for i,edit in enumerate(self.geometry_draft['links']):
+            imgui.push_id(i)
+            imgui.text(f'J{i+1} -> '+(f'J{i+2}' if i<6 else 'tool'))
+            imgui.same_line(110);imgui.set_next_item_width(120)
+            _,edit['length_mm']=imgui.input_float('##length',edit['length_mm'],5,25,'%.1f')
+            auto=edit['mass_override_kg'] is None
+            link=dict(e.cfg['links'][i],length_mm=edit['length_mm'],mass_override_kg=None)
+            estimated=structure(link)[0] if np.isfinite(edit['length_mm']) and edit['length_mm']>0 else 0.0
+            mass=estimated if auto else edit['mass_override_kg']
+            imgui.same_line(245);imgui.set_next_item_width(120)
+            imgui.begin_disabled(auto)
+            changed,mass=imgui.input_float('##mass',mass,.01,.1,'%.3f')
+            if changed: edit['mass_override_kg']=mass
+            imgui.end_disabled()
+            imgui.same_line(380)
+            changed,auto=imgui.checkbox('Auto mass',auto)
+            if changed: edit['mass_override_kg']=None if auto else estimated
+            imgui.pop_id()
+        imgui.text_wrapped('Auto assumes hollow tubes + brackets from YAML, not solid bars. For solid or machined links, uncheck Auto mass and enter a CAD or measured mass. Inertia still uses the estimated shape.')
+        if any(l['com_override_m'] is not None or l['inertia_override_kg_m2'] is not None for l in e.cfg['links']):
+            imgui.text_wrapped('CAD COM/inertia overrides are present and remain fixed. Update them in YAML when changing geometry.')
+        imgui.separator()
+        imgui.text('Actuator masses (kg) - per joint')
+        overrides=self.geometry_draft['motor_mass_overrides_kg']
+        for i,joint in enumerate(e.cfg['joints']):
+            if i%2: imgui.same_line(275)
+            imgui.push_id('motor_mass_'+joint['name'])
+            mass=overrides[joint['name']]
+            if mass is None: mass=e.cfg['motors'][joint['motor']]['mass_kg']
+            imgui.set_next_item_width(125)
+            changed,mass=imgui.input_float(joint['name']+' / '+joint['motor'],mass,.01,.1,'%.3f')
+            if changed: overrides[joint['name']]=mass
+            imgui.pop_id()
+        if imgui.button('Use catalog motor masses'):
+            self.geometry_draft['motor_mass_overrides_kg']={j['name']:None for j in e.cfg['joints']}
+        imgui.text_wrapped('Changes housing mass and inertia; motor torque ratings and controller gains stay the same.')
+        imgui.separator()
+        imgui.set_next_item_width(150)
+        _,self.geometry_draft['tool_mass_kg']=imgui.input_float('End effector (kg)',self.geometry_draft['tool_mass_kg'],.05,.1,'%.3f')
+        imgui.set_next_item_width(150)
+        _,self.geometry_draft['payload_mass_kg']=imgui.input_float('Payload (kg)',self.geometry_draft['payload_mass_kg'],.05,.1,'%.3f')
+        imgui.text_wrapped('Apply rebuilds geometry, mass and inertia; clears the charts; and pauses at the current joint angles. Saved poses and gains are kept.')
+        if imgui.button('Apply',(150,28)): self.act(self.apply_geometry,False)
+        imgui.same_line()
+        if imgui.button('Apply + save',(150,28)): self.act(self.apply_geometry,True)
+        imgui.end_disabled()
+        imgui.same_line()
+        if imgui.button('Close',(150,28)): imgui.close_current_popup()
+        imgui.text_wrapped(e.message)
+        imgui.end_popup()
 
     def key(self, window, key, scancode, action, mods):
         imgui.backends.glfw_key_callback(self.address,key,scancode,action,mods)
@@ -162,6 +230,10 @@ class Window:
         if changed: self.act(e.set_jog_speed,value)
         imgui.text_disabled('Duration applies to Go-to and A -> B.')
         imgui.text_disabled('Save A/B writes actual angles to YAML.')
+        if imgui.button('Link lengths / weights',(350,30)):
+            self.geometry_draft=e.geometry_settings()
+            imgui.open_popup('Link lengths / weights')
+        self.geometry_popup()
         imgui.separator()
         imgui.text('Joint targets (degrees)')
         if imgui.button('Zero arm',(171,28)): self.act(e.zero_arm)
