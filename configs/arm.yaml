@@ -50,6 +50,16 @@ motors:
     no_load_speed_rpm: 480.0
     gear_ratio: 9.0
     source: https://robstride.com/products/robStride06
+  '00':
+    mass_kg: 0.31
+    diameter_m: 0.057
+    depth_m: 0.051
+    rated_torque_nm: 5.0
+    peak_torque_nm: 14.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 315.0
+    gear_ratio: 10.0
+    source: https://robstride.com/products/robStride00
 joints:
 - name: J1
   motor: '03'
@@ -128,7 +138,7 @@ joints:
   armature_kg_m2: 0.0
   motor_mass_override_kg: null
 - name: J5
-  motor: '02'
+  motor: '00'
   axis:
   - 0
   - 0
@@ -147,7 +157,7 @@ joints:
   armature_kg_m2: 0.0
   motor_mass_override_kg: null
 - name: J6
-  motor: '02'
+  motor: '00'
   axis:
   - 1
   - 0
@@ -166,7 +176,7 @@ joints:
   armature_kg_m2: 0.0
   motor_mass_override_kg: null
 - name: J7
-  motor: '02'
+  motor: '00'
   axis:
   - 0
   - -1
@@ -284,7 +294,7 @@ tool:
   - 0.06
   - 0.08
 payload:
-  mass_kg: 0.5
+  mass_kg: 0.0
   com_offset_from_tip_m:
   - 0
   - 0
@@ -311,13 +321,13 @@ sweep:
   - -0.0005037622404589712
   - 1.994314256650003e-05
   b_deg:
-  - -14.000000000520568
-  - -49.099998492186536
-  - 1.594406434297646e-10
-  - 94.99999999979298
-  - 33.49999999986001
-  - 32.50000000406793
-  - 33.50000000012101
+  - -72.1988784752674
+  - -74.69626497840966
+  - -11.800000262751794
+  - 18.39999736086357
+  - 9.900000453062654
+  - 32.50004650865921
+  - 33.49999935863609
   duration_s: 3.0
   approach_s: 3.0
   settle_s: 1.0

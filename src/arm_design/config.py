@@ -20,6 +20,11 @@ def positive(value, label, zero=False):
 
 
 def validate(c):
+    if c.get('model_type') == 'urdf':
+        from .urdf import validate_urdf_config
+        validate_urdf_config(c)
+        validate_motion(c)
+        return
     for k in ('base_xyz_m', 'base_rpy_deg', 'gravity_m_s2'):
         vector(c[k], 3, k)
     if len(c['joints']) != 7 or len(c['links']) != 7:
@@ -66,6 +71,12 @@ def validate(c):
     vector(c['payload']['com_offset_from_tip_m'], 3, 'payload offset')
     if not 0 <= c['tool']['com_fraction_of_last_span'] <= 1:
         raise ValueError('Tool COM fraction must be between 0 and 1')
+    validate_motion(c)
+
+
+def validate_motion(c):
+    """Settings shared by the generated OpenArm and imported rotary robots."""
+    vector(c['gravity_m_s2'], 3, 'gravity_m_s2')
     if not 0 < c['drive']['torque_derating'] <= 1:
         raise ValueError('Torque derating must be in (0, 1]')
     for k in ('speed_envelope', 'gravity_compensation'):
@@ -80,7 +91,7 @@ def validate(c):
     s = c['sweep']
     bounds = np.array([j['limits_deg'] for j in c['joints']])
     for k in ('a_deg', 'b_deg'):
-        q = vector(s[k], 7, k)
+        q = vector(s[k], len(c['joints']), k)
         if np.any(q < bounds[:, 0]) or np.any(q > bounds[:, 1]):
             raise ValueError(f'{k} exceeds a joint limit')
     for k in ('duration_s', 'approach_s', 'settle_s', 'hold_s'):
@@ -92,6 +103,11 @@ def validate(c):
 
 def load_config(path=DEFAULT_CONFIG):
     c = yaml.safe_load(Path(path).read_text())
+    if c.get('model_type') == 'urdf':
+        source = c['urdf']
+        source['path'] = str((Path(path).resolve().parent / Path(source['path']).expanduser()).resolve())
+        source['package_roots'] = [str((Path(path).resolve().parent / Path(p).expanduser()).resolve())
+                                   for p in source.get('package_roots', [])]
     validate(c)
     return c
 
@@ -101,6 +117,8 @@ def save_sweep(path, sweep):
 
 
 def merge_geometry(c, geometry):
+    if c.get('model_type') == 'urdf':
+        raise ValueError('Edit geometry and inertial properties in the source URDF, then Reload YAML.')
     if len(geometry['links']) != 7:
         raise ValueError('Exactly seven link settings are required')
     for link, edit in zip(c['links'],geometry['links']):

@@ -57,12 +57,13 @@ def save_result(arm, run, out):
         writer=csv.writer(f); writer.writerow(fields)
         for r in run.rows:
             row = [r['time_s'],r['phase'],r['contacts'],*r['tip']]
-            for i in range(7):
+            for i in range(len(run.cfg['joints'])):
                 row += [np.rad2deg(r['q'][i]),np.rad2deg(r['target'][i]),r['velocity'][i],r['torque'][i],r['cap'][i],r['rated_cap'][i],r['torque'][i]*r['velocity'][i]]
             writer.writerow(row)
     if run.rows:
         time = np.array([r['time_s'] for r in run.rows]) - run.sweep_start
-        fig,axes=plt.subplots(7,2,figsize=(13,15),sharex=True,layout='constrained')
+        count = len(run.cfg['joints'])
+        fig,axes=plt.subplots(count,2,figsize=(13,max(4,count*2.15)),sharex=True,layout='constrained',squeeze=False)
         for i,j in enumerate(run.cfg['joints']):
             ax = axes[i,0]
             ax.plot(time,[r['torque'][i] for r in run.rows],label='Applied torque')
