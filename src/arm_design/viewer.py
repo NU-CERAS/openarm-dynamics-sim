@@ -16,6 +16,7 @@ import numpy as np
 from .experiment import Experiment
 from .model import structure
 from .torque_charts import chart_width, draw_torque_charts
+from .fea import METRICS
 
 PANEL_WIDTH = 380
 
@@ -49,13 +50,19 @@ class Window:
         self.cursor = (0,0)
         self.reload_requested = False
         self.closed = False
+        self.fea_body = 0
+        self.fea_interface = 0
+        self.fea_preview = None
+        self.render_model = None
 
-    def render_resources(self):
+    def render_resources(self, model=None):
+        model = self.experiment.arm.model if model is None else model
         if self.context is not None:
             self.context.free()
         self.scene = None
-        self.scene = mujoco.MjvScene(self.experiment.arm.model,maxgeom=2000)
-        self.context = mujoco.MjrContext(self.experiment.arm.model,mujoco.mjtFontScale.mjFONTSCALE_150)
+        self.scene = mujoco.MjvScene(model,maxgeom=2000)
+        self.context = mujoco.MjrContext(model,mujoco.mjtFontScale.mjFONTSCALE_150)
+        self.render_model = model
 
     def act(self, action, *args):
         try:
@@ -68,6 +75,7 @@ class Window:
         self.experiment.load()
         self.selected = min(self.selected,len(self.experiment.cfg['joints'])-1)
         self.reload_requested = True
+        self.fea_preview = None
         self.experiment.message = 'Reloaded YAML. Initialized at saved pose A.'
 
     def report(self):
@@ -77,6 +85,117 @@ class Window:
     def apply_geometry(self, save):
         self.experiment.apply_geometry(self.geometry_draft,save=save)
         self.reload_requested = True
+        self.fea_preview = None
+
+    def preview_fea(self, index):
+        recording = self.experiment.fea
+        if recording is None or recording.active:
+            return
+        self.experiment.paused = True
+        row = recording.rows[index]
+        data = mujoco.MjData(recording.model)
+        data.qpos[:] = row['q_rad']
+        data.qvel[:] = row['qvel_rad_s']
+        data.ctrl[:] = row['target_rad']
+        mujoco.mj_forward(recording.model, data)
+        self.fea_preview = (recording, index, data)
+
+    def fea_panel(self):
+        e = self.experiment
+        if not imgui.collapsing_header('FEA data collection tools'):
+            return
+        recording = e.fea
+        active = recording is not None and recording.active
+        label = 'Stop recording' if active else ('New recording (replace)' if recording else 'Start recording')
+        if imgui.button(label, (350, 30)):
+            self.act(e.stop_fea if active else e.start_fea)
+            if not active:
+                self.fea_preview = None
+                self.fea_body = self.fea_interface = 0
+            recording = e.fea
+            active = recording is not None and recording.active
+        imgui.text_wrapped('Record while jogging, moving to a pose, or sweeping. Stopping recording does not stop motion.')
+        if recording is None:
+            return
+        imgui.text_colored((1,.4,.3,1) if active else (.4,.8,1,1),
+                           ('RECORDING' if active else 'STOPPED') +
+                           f' | {recording.duration:.2f}s | {len(recording.rows)} samples')
+        imgui.text_disabled(f'{1/recording.model.opt.timestep:g} Hz / capacity {recording.max_samples} samples')
+        if active:
+            if e.paused:
+                imgui.text_wrapped('Simulation paused: no new samples until Resume.')
+            imgui.text_wrapped('Stop recording to inspect peaks and export. Controller gains are locked while recording.')
+            return
+        imgui.text_wrapped(recording.reason)
+        if not recording.rows:
+            imgui.text_wrapped('No samples. Resume simulation during the next recording.')
+            return
+        imgui.text('Maximum observed loads')
+        imgui.text_wrapped('Forces in N; moments in Nm. Each connection is shown separately in the receiving link frame.')
+        # Put moving links first, retaining fixed motor/tool bodies for their
+        # own structural analyses.
+        primary = list(dict.fromkeys(int(i) for i in recording.model.jnt_bodyid))
+        bodies = primary + [i for i in recording.body_ids if i not in primary]
+        self.fea_body = min(self.fea_body, len(bodies)-1)
+        imgui.set_next_item_width(245)
+        changed, self.fea_body = imgui.combo('Link / body', self.fea_body,
+                                           [recording.names[i] for i in bodies])
+        if changed:
+            self.fea_interface = 0
+        body = bodies[self.fea_body]
+        interfaces = [i for i, x in enumerate(recording.interfaces) if x['body_id'] == body]
+        self.fea_interface = min(self.fea_interface, len(interfaces)-1)
+        imgui.set_next_item_width(245)
+        _, self.fea_interface = imgui.combo('Connection', self.fea_interface,
+            [recording.names[recording.interfaces[i]['other_body_id']] for i in interfaces])
+        i = interfaces[self.fea_interface]
+        if imgui.begin_table('FEA extrema', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
+            for name in ('Load', 'Minimum', 'Maximum'):
+                imgui.table_setup_column(name)
+            imgui.table_headers_row()
+            for j, metric in enumerate(METRICS):
+                imgui.table_next_row()
+                imgui.table_set_column_index(0)
+                imgui.text(metric)
+                for column, values, indices in (
+                    (1, recording.minimum, recording.min_index),
+                    (2, recording.maximum, recording.max_index)):
+                    imgui.table_set_column_index(column)
+                    index = int(indices[i,j])
+                    if imgui.small_button(f'{values[i,j]:.4g}##peak{j}_{column}'):
+                        self.preview_fea(index)
+                    if imgui.is_item_hovered():
+                        imgui.set_tooltip(f"Inspect pose at {recording.rows[index]['time_s']:.4f}s")
+            imgui.end_table()
+        imgui.text_wrapped('Click a value to inspect its recorded pose. Different peaks are separate load cases.')
+        if self.fea_preview is not None and self.fea_preview[0] is recording:
+            _, index, _ = self.fea_preview
+            row = recording.rows[index]
+            imgui.text_wrapped(f"Inspecting sample {index} at {row['time_s']:.4f}s | {row['phase']}")
+            selected = index in recording.selected_samples
+            if imgui.button('Remove load case' if selected else 'Select load case'):
+                if selected:
+                    recording.selected_samples.remove(index)
+                else:
+                    recording.selected_samples.add(index)
+            imgui.same_line()
+            if imgui.button('Return to live pose'):
+                self.fea_preview = None
+            imgui.text_wrapped('Pose inspection pauses motion; Resume returns to live simulation.')
+        imgui.text_wrapped(f'Max tracking error: {recording.max_tracking_error_deg:.2f} deg | '
+                          f'Saturated samples: {recording.saturated_samples} | '
+                          f'Contact samples: {recording.contact_samples}')
+        imgui.text_wrapped('Loads only; stress, deflection and safety factors require FEA.')
+        if imgui.button('Export peak summary', (350, 26)):
+            self.act(e.export_fea, 'peaks')
+        cases_label = (f'Export {len(recording.selected_samples)} selected load cases'
+                       if recording.selected_samples else 'Export all peak load cases')
+        if imgui.button(cases_label, (350, 26)):
+            self.act(e.export_fea, 'cases')
+        if imgui.button('Export full recording + load cases', (350, 26)):
+            self.act(e.export_fea, 'all')
+        if recording.last_export:
+            imgui.text_wrapped('Saved to '+str(recording.last_export))
 
     def geometry_popup(self):
         imgui.set_next_window_size((540,0))
@@ -222,11 +341,15 @@ class Window:
         if imgui.button('Go to B',(171,30)): self.act(e.go_to,'B')
         # A Go-to above may have started this frame. Experiment methods also
         # enforce idle state, so queued clicks cannot overlap motions.
-        if imgui.button('Run A -> B sweep',(350,32)): self.act(e.start_sweep)
+        if imgui.button('Run A -> B sweep',(171,32)): self.act(e.start_sweep, 'A -> B')
+        imgui.same_line()
+        if imgui.button('Run B -> A sweep',(171,32)): self.act(e.start_sweep, 'B -> A')
         imgui.end_disabled()
         if imgui.button('Resume' if e.paused else 'Pause',(171,28)): e.paused=not e.paused
         imgui.same_line()
         if imgui.button('Stop / hold',(171,28)): self.act(e.stop)
+        imgui.separator()
+        self.fea_panel()
         imgui.separator()
         imgui.begin_disabled(e.busy)
         imgui.set_next_item_width(170)
@@ -235,7 +358,7 @@ class Window:
         imgui.set_next_item_width(170)
         changed,value = imgui.input_float('Jog speed (deg/s)',e.cfg['sweep']['jog_speed_deg_s'],5,30,'%.1f')
         if changed: self.act(e.set_jog_speed,value)
-        imgui.text_disabled('Duration applies to Go-to and A -> B.')
+        imgui.text_disabled('Duration applies to Go-to and both sweeps.')
         imgui.text_disabled('Save A/B writes actual angles to YAML.')
         if imported:
             imgui.text_wrapped('Geometry and inertia come from the URDF. Edit it, then Reload YAML to reimport.')
@@ -260,6 +383,7 @@ class Window:
             imgui.pop_id()
         imgui.text_disabled('Ctrl-click a slider to type an exact angle.')
         if imgui.collapsing_header('Advanced: per-joint P / D'):
+            imgui.begin_disabled(e.fea is not None and e.fea.active)
             imgui.set_next_item_width(170)
             _,self.selected = imgui.combo('Joint' if imported else 'Motor',self.selected,
                                         [j['name'] if imported else j['name']+' / RobStride '+j['motor'] for j in e.cfg['joints']])
@@ -271,6 +395,7 @@ class Window:
             changed,d = imgui.input_float('D (Nm s/rad)',j['kd_nm_s_rad'],1,5,'%.2f')
             if changed: self.act(e.set_gains,self.selected,j['kp_nm_rad'],d)
             imgui.text_wrapped('Applied live. Simulation PD gains, not firmware PID settings. Keep gains fixed when comparing models.')
+            imgui.end_disabled()
         if imgui.button('Save controls',(171,28)): self.act(e.save_settings)
         imgui.same_line()
         if imgui.button('Reload YAML',(171,28)): self.act(self.reload)
@@ -291,15 +416,26 @@ class Window:
 
     def render_arm(self, width, height, sx, sy):
         e = self.experiment
+        if not e.paused:
+            self.fea_preview = None
+        if self.fea_preview is not None:
+            recording, index, data = self.fea_preview
+            model = recording.model
+            label = f"FEA recorded pose | t={recording.rows[index]['time_s']:.4f}s"
+        else:
+            model, data = e.arm.model, e.data
+            label = f'{e.state} | Move {e.cfg["sweep"]["duration_s"]:g}s | Jog {e.cfg["sweep"]["jog_speed_deg_s"]:g} deg/s'
+        if self.render_model is not model:
+            self.render_resources(model)
         left = int(PANEL_WIDTH*sx)
         right = int(chart_width(width/sx)*sx)
         viewport = mujoco.MjrRect(left,0,max(1,width-left-right),height)
         # Refresh render transforms without altering logged pre-step samples.
-        mujoco.mj_forward(e.arm.model,e.data)
-        mujoco.mjv_updateScene(e.arm.model,e.data,self.option,None,self.camera,mujoco.mjtCatBit.mjCAT_ALL,self.scene)
+        mujoco.mj_forward(model,data)
+        mujoco.mjv_updateScene(model,data,self.option,None,self.camera,mujoco.mjtCatBit.mjCAT_ALL,self.scene)
         mujoco.mjr_render(viewport,self.scene,self.context)
         mujoco.mjr_overlay(mujoco.mjtFontScale.mjFONTSCALE_100,mujoco.mjtGridPos.mjGRID_TOPLEFT,viewport,
-                           f'{e.state} | Move {e.cfg["sweep"]["duration_s"]:g}s | Jog {e.cfg["sweep"]["jog_speed_deg_s"]:g} deg/s',
+                           label, 'FEA pose inspection' if self.fea_preview else
                            'Contacts '+('ON' if e.cfg['simulation']['contacts'] else 'OFF'),self.context)
 
     def run(self):
@@ -372,6 +508,14 @@ class Window:
         finally:
             if self.experiment.run:
                 self.experiment.stop('Window closed during sweep.')
+            if self.experiment.fea and self.experiment.fea.rows:
+                if self.experiment.fea.active:
+                    self.experiment.fea.stop('Window closed during recording.')
+                if self.experiment.fea.last_export is None:
+                    try:
+                        self.experiment.export_fea()
+                    except OSError as exc:
+                        print(f'Could not save FEA recording on exit: {exc}', file=sys.stderr)
             imgui.backends.opengl2_shutdown();imgui.backends.glfw_shutdown()
             imgui.destroy_context()
             self.context.free();self.scene = None

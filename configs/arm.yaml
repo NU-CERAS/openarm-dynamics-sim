@@ -1,6 +1,7 @@
 # MuJoCo arm parameters. Units are in field names; joint angles here are degrees.
 # Links are J1->J2, ..., J6->J7, J7->tool. All dimensions are preliminary.
-# Each link defaults to a hollow aluminum tube + a bracket at its joint.
+# Link masses match part_1..part_7 in robots/moving_asm/urdf/moving_asm.urdf.
+# COM/inertia retain tube+bracket estimates; inertia scales with each mass override.
 # mass_override_kg replaces tube+bracket mass, excluding motors/tool/payload.
 # com_override_m is in that joint frame; inertia_override_kg_m2 is [Ixx,Iyy,Izz,Ixy,Ixz,Iyz]
 # about the overridden COM, expressed in that joint frame. null = estimated.
@@ -151,7 +152,7 @@ joints:
   - -90
   - 90
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
   friction_nm: 0.03
   damping_nm_s_rad: 0.01
   armature_kg_m2: 0.0
@@ -170,7 +171,7 @@ joints:
   - -45
   - 45
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
   friction_nm: 0.03
   damping_nm_s_rad: 0.01
   armature_kg_m2: 0.0
@@ -189,7 +190,7 @@ joints:
   - -90
   - 90
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
   friction_nm: 0.03
   damping_nm_s_rad: 0.01
   armature_kg_m2: 0.0
@@ -205,7 +206,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.28200000524520874
+  mass_override_kg: 0.758773
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 100.0
@@ -218,7 +219,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.28200000524520874
+  mass_override_kg: 0.6048
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 125.0
@@ -231,7 +232,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.30300000309944153
+  mass_override_kg: 0.738336
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 100.0
@@ -244,7 +245,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.28200000524520874
+  mass_override_kg: 0.354697
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 70.0
@@ -257,7 +258,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.25699999928474426
+  mass_override_kg: 0.163622
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 75.0
@@ -270,7 +271,7 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.2619999945163727
+  mass_override_kg: 0.258995
   com_override_m: null
   inertia_override_kg_m2: null
 - length_mm: 70.0
@@ -283,18 +284,18 @@ links:
   density_kg_m3: 2700
   bracket_mass_kg: 0.1
   bracket_radius_m: 0.025
-  mass_override_kg: 0.25699999928474426
+  mass_override_kg: 0.427991
   com_override_m: null
   inertia_override_kg_m2: null
 tool:
-  mass_kg: 0.4000000059604645
+  mass_kg: 0.0
   com_fraction_of_last_span: 0.7
   box_size_m:
   - 0.06
   - 0.06
   - 0.08
 payload:
-  mass_kg: 0.0
+  mass_kg: 0.5
   com_offset_from_tip_m:
   - 0
   - 0
@@ -321,13 +322,13 @@ sweep:
   - -0.0005037622404589712
   - 1.994314256650003e-05
   b_deg:
-  - -72.1988784752674
-  - -74.69626497840966
-  - -11.800000262751794
-  - 18.39999736086357
-  - 9.900000453062654
-  - 32.50004650865921
-  - 33.49999935863609
+  - -4.799512017997441
+  - -86.80610114459228
+  - -3.9000001186925304
+  - 87.40000105952794
+  - -0.6999999977698705
+  - -8.467879969580439e-06
+  - 8.147237981161622e-09
   duration_s: 3.0
   approach_s: 3.0
   settle_s: 1.0

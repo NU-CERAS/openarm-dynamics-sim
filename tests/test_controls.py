@@ -160,6 +160,10 @@ def test_invalid_controls_and_reload_leave_state_intact(experiment):
 
 def test_geometry_rebuild_updates_physics_and_preserves_pose(experiment):
     e=experiment
+    # This test exercises length-driven mass changes in automatic mass mode.
+    initial=e.geometry_settings()
+    initial['links'][0]['mass_override_kg']=None
+    e.apply_geometry(initial)
     before=e.arm.structural_masses.copy()
     old_mass=e.arm.model.body_mass.sum()
     q=e.data.qpos.copy();tip=e.data.site('tip').xpos.copy()

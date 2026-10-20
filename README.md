@@ -118,6 +118,49 @@ proportionally to mass (a uniform-density approximation). Other CAD inertias/mas
 are retained. Total simulated mass, including the real seventh link, is **7.446340 kg**.
 The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
 
+### Run both arm models
+
+The original arm's structural link masses now match the CAD URDF's `part_1` through
+`part_7`, in joint order:
+
+| Link | Mass (kg, excluding motors) |
+| --- | --- |
+| 1 | 0.758773 |
+| 2 | 0.604800 |
+| 3 | 0.738336 |
+| 4 | 0.354697 |
+| 5 | 0.163622 |
+| 6 | 0.258995 |
+| 7 | 0.427991 |
+
+These are saved mass overrides, not a live sync with future URDF edits. The original
+arm retains its sketch geometry, estimated COMs, and mass-scaled tube/bracket
+inertias. Its separate 0.4 kg tool and motor masses are unchanged; the URDF uses its
+own CAD inertial properties and has no separate placeholder tool. Matching link
+masses alone does not make the models dynamically equivalent.
+
+Run either viewer from this project folder (separate output folders keep reports apart):
+
+```bash
+# Original seven-DOF arm with the matched link masses:
+./scripts/start.sh --out results/original
+
+# Imported CAD arm:
+./scripts/start.sh --urdf robots/moving_asm/urdf/moving_asm.urdf --out results/cad
+```
+
+In each viewer, save poses A and B, set **Move duration**, then click
+**Run A -> B sweep** and **Open last report**. Each model keeps its own saved poses;
+their joint frames differ, so equal joint angles do not necessarily give equal
+physical poses.
+
+To run the saved motions without opening a window:
+
+```bash
+.venv/bin/arm-sim sweep --out results/original
+.venv/bin/arm-sim sweep --urdf robots/moving_asm/urdf/moving_asm.urdf --out results/cad
+```
+
 ## Use
 
 1. Move the joint sliders to pose A, let the arm settle, then click **Save A position**. Repeat for B.
@@ -130,8 +173,68 @@ The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
 - **Apply + save:** rebuild and save geometry/masses, then close the editor and press **Resume**. **Apply** makes temporary changes.
 - **Advanced P / D:** adjust each joint's gains. **Save controls** saves gains, speed, and duration.
 - **Pause / Resume / Stop:** control motion.
+- **Run B -> A sweep:** approach saved B, settle and verify the start pose,
+  sweep to A over **Move duration**, then hold A. Both sweep directions save
+  torque/tracking reports with the direction identified.
 - **Reload YAML:** load external edits to `configs/arm.yaml`.
 
 Charts: one per joint, top to bottom (scroll for larger robots). Yellow = nominal torque; red = maximum torque.
 
 Camera: drag to rotate, right-drag to pan, scroll to zoom.
+
+### FEA data collection
+
+Expand **FEA data collection tools** in the left panel. Click **Start recording**,
+then jog, use Go to A/B, or run either sweep. Click **Stop recording** to inspect
+the results; this stops data capture, not arm motion. Pause/Resume suspends/resumes
+sampling with simulation time. Data is captured every physics step (1,000 Hz with
+the saved 1 ms timestep), independently of the live torque charts.
+
+Select a **Link / body** and **Connection** to inspect signed minimum/maximum
+Fx/Fy/Fz and Mx/My/Mz, plus force and moment magnitudes. Values use the receiving
+body's local axes. Click a peak to pause motion and preview its recorded pose
+without changing the live simulation state. **Select load case** keeps that
+complete timestamp for export. **Return to live pose** exits inspection; Resume
+also exits inspection and resumes the live arm.
+
+Exports are saved under the output folder in a timestamped `fea-*` directory:
+
+- **Peak summary:** `peaks.csv` with extrema and their timestamps.
+- **Load cases:** `load_cases.json` contains complete simultaneous states and
+  all interface loads; `load_cases.csv` contains their local forces, moments,
+  and application points. With no selection, all distinct extrema timestamps
+  are exported. With selections, those selected timestamps are exported.
+- **Full recording:** also includes `history.jsonl` (one complete state per line)
+  and `interface_loads.csv` (one receiving-body interface per sample).
+
+Every export includes `metadata.json` with units, frames, mass/inertia, interface
+definitions, recording checks and limitations; a configuration snapshot; the exact
+compiled `model.mjb`; and `source_model.xml`. The compiled model preserves live
+controller gains. Source XML is the model's original build source; use the compiled
+model/configuration snapshot for the exact recorded settings.
+
+**These are observed rigid-body loads, not stress or deflection results.** Each
+interface is represented on both receiving bodies with opposite forces; use only
+the loads acting on the body you are analyzing. Moments are about the listed
+application points. Gravity and physical COM/angular accelerations are supplied
+for consistent inertial loading. Contact/perturbation resultants are exported
+separately at each body's COM; they do not specify contact pressure distributions.
+CAD surface mapping, supports, materials and mesh checks remain FEA tasks.
+
+The imported CAD arm preserves fixed motor attachments and individual `part_*`
+bodies. The original generated model aggregates each structure with its attached
+motor housing and any tool/payload; its exported body loads describe that assembly,
+not an isolated machined linkage. Do not combine component extrema from different
+times into one load case.
+
+Changing geometry or reloading ends the current recording and retains its data.
+Controller gain edits are disabled while recording. A capacity limit (displayed
+in the panel, sized by model complexity) stops recording without dropping earlier
+samples. Export before **New recording (replace)** if you want to retain the old
+recording. Closing the window saves an unexported recording automatically.
+
+For a reverse headless torque sweep:
+
+```bash
+.venv/bin/arm-sim sweep --direction b-to-a
+```

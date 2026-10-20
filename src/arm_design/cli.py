@@ -12,6 +12,8 @@ def main():
     p.add_argument('--package-root',type=Path,action='append',default=[],help='Folder containing ROS packages, or a package itself (repeatable; used with --urdf)')
     p.add_argument('--out',type=Path,default=ROOT/'results')
     p.add_argument('--duration',type=float,help='A→B seconds (headless sweep only; viewer uses [/] or YAML)')
+    p.add_argument('--direction',choices=['a-to-b','b-to-a'],default='a-to-b',
+                   help='Direction for headless sweeps (default: a-to-b)')
     args=p.parse_args()
     if args.package_root and args.urdf is None:
         p.error('--package-root requires --urdf; for saved configs edit urdf.package_roots in YAML.')
@@ -41,7 +43,7 @@ def main():
     else:
         from .simulation import run_headless
         from .reporting import save_result, summary
-        arm,run=run_headless(c)
+        arm,run=run_headless(c, 'B -> A' if args.direction == 'b-to-a' else 'A -> B')
         folder=save_result(arm,run,args.out)
         s=summary(run)
         print('Tracking within tolerance' if s['tracking_ok'] else s['reason'] or 'Tracking exceeded tolerance')

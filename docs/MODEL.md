@@ -52,5 +52,27 @@ parameters. The window allows live P/D edits between runs. Those values are capt
 run snapshot and generated XML; use Save controls to persist them to the main YAML.
 Geometry and inertial changes require editing YAML and reloading.
 
-No structural stress, deflection, bearing load, fatigue, thermal, firmware, or
-hardware-control prediction is implied by the joint torque measurements.
+The optional FEA recorder calls MuJoCo's `mj_rnePostConstraint` after the same
+pre-integration forward pass. It translates parent/child interaction wrenches from
+the subtree COM reference to each connection point, then rotates them into each
+receiving body's local frame. Hinge connections use their joint anchor; fixed
+connections use the child body origin. Equal/opposite interface views are exported
+for the two receiving bodies. Actuator torque is already represented in the
+interaction loads and must not be added to those loads a second time.
+
+Body COM velocity and physical acceleration are recorded in world axes, with
+angular components first. MuJoCo's RNE gravity offset is removed from acceleration
+for moving bodies; bodies welded to the world have zero physical acceleration.
+External contact/perturbation resultants are recorded about each body's COM in
+local axes, separately from interface loads and gravity. They preserve the net
+wrench but not contact pressure distributions. Fixed URDF motor bodies remain
+distinct; the generated model's aggregate mass/inertia does not isolate motor
+mount forces from its structural link.
+
+The FEA recorder retains all phases, including approach and settling, and is
+independent of the sweep report's narrower summary window. The A/B definitions
+are never swapped in configuration: reverse sweeps select B as their start and A
+as their destination, with the same preparation, trajectory and hold behavior.
+
+No structural stress, deflection, fatigue, thermal, firmware, or hardware-control
+prediction is implied by the joint torque measurements or FEA load exports.

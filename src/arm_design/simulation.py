@@ -51,7 +51,7 @@ def control(arm, d, target, velocity=None):
     return cap
 
 
-def step(arm, d, target, velocity=None):
+def step(arm, d, target, velocity=None, recorder=None, phase='jog'):
     cap = control(arm, d, target, velocity)
     # Log all quantities at the same PRE-step timestamp. mj_step's acceleration/
     # torque fields otherwise describe the old state but qpos describes the new one.
@@ -60,6 +60,10 @@ def step(arm, d, target, velocity=None):
                target=np.asarray(target).copy(), torque=d.qfrc_actuator.copy(),
                cap=cap.copy(), rated_cap=torque_limit(arm.cfg, d.qvel, rated=True),
                tip=d.site('tip').xpos.copy(), contacts=int(d.ncon))
+    # Capture before integration too: reactions, pose and acceleration must
+    # describe the same instant. The recorder never uses the display buffer.
+    if recorder is not None and recorder.active:
+        recorder.capture(arm.model, d, row, phase)
     mujoco.mj_step(arm.model, d)
     if not np.isfinite(d.qpos).all() or not np.isfinite(d.qvel).all() or any(w.number for w in d.warning):
         raise RuntimeError('MuJoCo reported an unstable/invalid simulation. Reduce gains or timestep and inspect the model.')
@@ -67,13 +71,17 @@ def step(arm, d, target, velocity=None):
 
 
 class Sweep:
-    """Approach A, settle, timed A->B, then hold B; never teleport during a run."""
-    def __init__(self, arm, data):
+    """Approach the start, settle, sweep in either direction, then hold."""
+    def __init__(self, arm, data, direction='A -> B'):
+        if direction not in ('A -> B', 'B -> A'):
+            raise ValueError('Sweep direction must be A -> B or B -> A.')
+        self.direction = direction
+        self.start_name, self.end_name = direction.split(' -> ')
         self.cfg = deepcopy(arm.cfg)
         self.start_time = float(data.time)
         self.start_q = data.qpos.copy()
-        self.a = np.deg2rad(self.cfg['sweep']['a_deg'])
-        self.b = np.deg2rad(self.cfg['sweep']['b_deg'])
+        self.a = np.deg2rad(self.cfg['sweep'][self.start_name.lower()+'_deg'])
+        self.b = np.deg2rad(self.cfg['sweep'][self.end_name.lower()+'_deg'])
         self.rows = []
         self.complete = False
         self.reason = ''
@@ -83,7 +91,7 @@ class Sweep:
         self.sweep_end = self.sweep_start + s['duration_s']
         self.end = self.sweep_end + s['hold_s']
 
-    def tick(self, arm, data):
+    def tick(self, arm, data, recorder=None):
         t = float(data.time) - self.start_time
         s = self.cfg['sweep']
         if t + 1e-9 >= self.end:
@@ -99,23 +107,23 @@ class Sweep:
                 self.checked_start = True
                 err = np.max(np.abs(np.rad2deg(data.qpos-self.a)))
                 if err > s['tracking_tolerance_deg']:
-                    self.reason = f'Could not reach A: {err:.2f} deg error. Sweep not executed.'
+                    self.reason = f'Could not reach {self.start_name}: {err:.2f} deg error. Sweep not executed.'
                     return False
             q, v = smooth_move(self.a, self.b, t-self.sweep_start, s['duration_s'])
             phase = 'sweep'
         else:
             q, v, phase = self.b, np.zeros_like(self.b), 'hold'
-        row = step(arm, data, q, v)
+        row = step(arm, data, q, v, recorder=recorder, phase=self.direction+': '+phase)
         row['time_s'] = t
         row['phase'] = phase
         self.rows.append(row)
         return True
 
 
-def run_headless(cfg):
+def run_headless(cfg, direction='A -> B'):
     arm = build_arm(cfg)
     data = arm.data()
-    run = Sweep(arm, data)
+    run = Sweep(arm, data, direction)
     while run.tick(arm, data):
         pass
     return arm, run

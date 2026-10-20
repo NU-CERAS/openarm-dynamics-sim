@@ -13,7 +13,7 @@ def summary(run):
     task = [r for r in run.rows if r['phase'] in ('sweep','hold')]
     c = run.cfg
     if not task:
-        return dict(completed=False, tracking_ok=False, reason=run.reason or 'No sweep samples', joints=[])
+        return dict(completed=False, tracking_ok=False, direction=run.direction, reason=run.reason or 'No sweep samples', joints=[])
     torque = np.array([r['torque'] for r in task])
     velocity = np.array([r['velocity'] for r in task])
     error = np.rad2deg(np.array([r['q']-r['target'] for r in task]))
@@ -25,6 +25,7 @@ def summary(run):
     limits_ok = bool(np.all(q >= bounds[:,0] - np.deg2rad(.5)) and np.all(q <= bounds[:,1] + np.deg2rad(.5)))
     speed_ok = bool(np.all(np.abs(velocity)*30/np.pi <= rating(c,'no_load_speed_rpm')))
     result = dict(completed=run.complete, reason=run.reason, tracking_ok=bool(run.complete and np.max(np.abs(error)) <= c['sweep']['tracking_tolerance_deg']), joint_limits_ok=limits_ok, below_no_load_speed=speed_ok, duration_s=c['sweep']['duration_s'], measured_window='sweep + final hold; approach and settling excluded', contacts_enabled=c['simulation']['contacts'], maximum_contacts=max(r['contacts'] for r in task), joints=[])
+    result['direction'] = run.direction
     for i,j in enumerate(c['joints']):
         saturated = (cap[:,i] > 1e-8) & (np.abs(torque[:,i]) >= .99*cap[:,i])
         above = np.abs(torque[:,i]) > rated[:,i]
@@ -79,14 +80,14 @@ def save_result(arm, run, out):
                 a.axvline(run.cfg['sweep']['duration_s'],color='green',alpha=.5)
                 a.grid(alpha=.2)
         axes[0,0].legend(fontsize=8);axes[0,1].legend(fontsize=8)
-        for ax in axes[-1]: ax.set_xlabel('Seconds relative to A → B start (negative = approach/settle)')
-        fig.suptitle('MuJoCo: applied joint torque and motion tracking')
+        for ax in axes[-1]: ax.set_xlabel(f'Seconds relative to {run.direction} start (negative = approach/settle)')
+        fig.suptitle(f'MuJoCo {run.direction}: applied joint torque and motion tracking')
         fig.savefig(folder/'loads.png',dpi=120);plt.close(fig)
     status = 'Tracking within tolerance' if result['tracking_ok'] else 'Incomplete or tracking outside tolerance'
     rows=''.join('<tr>'+''.join(f'<td>{html.escape(str(v)) if isinstance(v,str) else f"{v:.3f}"}</td>' for v in (j['joint'],j['peak_torque_nm'],j['rms_torque_nm'],j['max_tracking_error_deg'],j['seconds_above_rated_proxy'],j['saturated_percent']))+'</tr>' for j in result['joints'])
     (folder/'report.html').write_text(f'''<!doctype html><meta charset="utf-8"><title>Arm sweep</title>
 <style>body{{font:16px system-ui;max-width:1100px;margin:32px auto;padding:0 16px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border-bottom:1px solid #ddd;text-align:left}}img{{width:100%}}</style>
-<h1>{status}</h1><p>{html.escape(run.reason)} Duration: {run.cfg['sweep']['duration_s']:g} s. Summary covers sweep + final hold.</p>
+<h1>{status}</h1><p>{html.escape(run.direction)}. {html.escape(run.reason)} Duration: {run.cfg['sweep']['duration_s']:g} s. Summary covers sweep + final hold.</p>
 <p>Applied motor torque, not unlimited ideal demand. Inspect tracking error and saturation together. Rated/peak envelopes are assumptions; RMS is not a thermal certification. Contacts: {'enabled (primitive approximations)' if run.cfg['simulation']['contacts'] else 'disabled'}.</p>
 <table><tr><th>Joint</th><th>Peak Nm</th><th>RMS Nm</th><th>Max error °</th><th>Above rated s</th><th>Saturated %</th></tr>{rows}</table>
 <p><a href="loads.csv">CSV</a> · <a href="config.yaml">Parameters</a> · <a href="model.xml">MuJoCo model</a> · <a href="summary.json">Full summary</a></p><img src="loads.png" alt="Joint torque and motion tracking">
