@@ -1,9 +1,10 @@
 from copy import deepcopy
+from xml.etree import ElementTree as ET
 import csv
 import numpy as np
 import mujoco
 import pytest
-from arm_design.config import load_config, validate, save_sweep
+from arm_design.config import ROOT, load_config, validate, save_sweep
 from arm_design.model import build_arm, structure, rpy
 from arm_design.simulation import run_headless, control, step, smooth_move
 from arm_design.reporting import summary, save_result
@@ -23,11 +24,14 @@ def test_model_axes_frames_and_mass():
     expected=sum(a.structural_masses)+sum(c['motors'][j['motor']]['mass_kg'] for j in c['joints'][1:])+c['tool']['mass_kg']+c['payload']['mass_kg']
     moving=[m.body(f'link{i}').id for i in range(1,8)]
     assert sum(m.body_mass[moving])==pytest.approx(expected)
-    np.testing.assert_allclose(a.structural_masses,[.18208,.18208,.2026,.18208,.157456,.16156,.157456])
+    cad=ET.parse(ROOT/'robots/moving_asm/urdf/moving_asm.urdf').getroot()
+    cad_masses=[float(cad.find(f"link[@name='part_{i}']/inertial/mass").get('value')) for i in range(1,8)]
+    np.testing.assert_allclose(a.structural_masses,cad_masses)
 
 
 def test_hollow_tube_mass_and_inertia_follow_length():
     c=load_config(); l=c['links'][0]
+    l['mass_override_kg']=None  # Exercise automatic mass estimation explicitly.
     m,com,I=structure(l)
     l['length_mm']*=2
     m2,com2,I2=structure(l)
@@ -42,7 +46,8 @@ def test_hollow_tube_mass_and_inertia_follow_length():
 
 
 def test_gravity_matches_potential_gradient_and_payload_moment():
-    c=load_config();a=build_arm(c);d=a.data();m=a.model
+    c=load_config();c['payload']['mass_kg']=.5
+    a=build_arm(c);d=a.data();m=a.model
     eps=1e-6
     def potential(q):
         t=mujoco.MjData(m);t.qpos[:]=q;mujoco.mj_forward(m,t)

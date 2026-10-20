@@ -8,18 +8,22 @@ from .config import load_config, save_controls, merge_geometry
 from .model import build_arm
 from .simulation import Sweep, smooth_move, step
 from .reporting import save_result, summary
+from .fea import FEARecording
 
 
 class Experiment:
     def __init__(self, path, out):
         self.path, self.out = Path(path), Path(out)
         self.last_report = None
+        self.fea = None
         self.message = 'Jog to a pose, then click Save A or Save B.'
         self.load()
 
     def load(self):
         # Build first: invalid YAML leaves the running experiment intact.
         arm = build_arm(load_config(self.path))
+        if self.fea and self.fea.active:
+            self.fea.stop('Model reloaded; recording ended.')
         self.arm, self.cfg = arm, arm.cfg
         self.data = arm.data()
         self.target = self.data.qpos.copy()
@@ -69,6 +73,8 @@ class Experiment:
         mujoco.mj_forward(arm.model,data)
         if save:
             save_controls(self.path,geometry=geometry)
+        if self.fea and self.fea.active:
+            self.fea.stop('Geometry/mass changed; recording ended.')
         self.arm,self.cfg,self.data = arm,config,data
         self.target = data.qpos.copy()
         self.command = self.target.copy()
@@ -81,12 +87,16 @@ class Experiment:
         if not np.isfinite(value) or not .1 <= value <= 120:
             raise ValueError('Move duration must be 0.1 to 120 seconds.')
         self.cfg['sweep']['duration_s'] = float(value)
+        if self.fea:
+            self.fea.event(self.data.time, 'move_duration_s', float(value))
 
     def set_jog_speed(self, value):
         self.idle_required()
         if not np.isfinite(value) or value <= 0:
             raise ValueError('Jog speed must be positive.')
         self.cfg['sweep']['jog_speed_deg_s'] = float(value)
+        if self.fea:
+            self.fea.event(self.data.time, 'jog_speed_deg_s', float(value))
 
     def set_target(self, index, degrees):
         self.idle_required()
@@ -97,6 +107,8 @@ class Experiment:
 
     def set_gains(self, index, kp, kd):
         self.idle_required()
+        if self.fea and self.fea.active:
+            raise ValueError('Stop FEA recording before changing controller gains.')
         if not np.isfinite([kp,kd]).all() or kp <= 0 or kd < 0:
             raise ValueError('P must be positive and D must be nonnegative.')
         j = self.cfg['joints'][index]
@@ -149,11 +161,29 @@ class Experiment:
         self.paused = False
         self.message = f'Moving smoothly to {name}; torque limits remain active.'
 
-    def start_sweep(self):
+    def start_sweep(self, direction='A -> B'):
         self.idle_required()
-        self.run = Sweep(self.arm,self.data)
+        self.run = Sweep(self.arm,self.data,direction)
         self.paused = False
-        self.message = 'Approaching A, then sweeping to B and holding.'
+        self.message = f'Approaching {self.run.start_name}, then sweeping to {self.run.end_name} and holding.'
+
+    def start_fea(self):
+        if self.fea and self.fea.active:
+            raise ValueError('FEA recording is already active.')
+        self.fea = FEARecording(self.arm, self.data)
+        self.message = 'FEA recording started. Jog, Go to A/B, or run a sweep; Resume if paused.'
+
+    def stop_fea(self):
+        if self.fea and self.fea.active:
+            self.fea.stop()
+            self.message = f'FEA recording stopped: {len(self.fea.rows)} samples. Motion is unchanged.'
+
+    def export_fea(self, kind='all'):
+        if self.fea is None:
+            raise ValueError('Record FEA data first.')
+        folder = self.fea.export(self.out, kind)
+        self.message = f'FEA export saved: {folder}'
+        print(self.message, flush=True)
 
     def finish_sweep(self):
         folder = save_result(self.arm,self.run,self.out)
@@ -167,6 +197,8 @@ class Experiment:
         self.command = self.target.copy()
 
     def stop(self, reason='Stopped by user.'):
+        if self.fea:
+            self.fea.event(self.data.time, 'stop_hold', reason)
         if self.run:
             self.run.reason = reason
             self.finish_sweep()
@@ -180,7 +212,7 @@ class Experiment:
             return
         try:
             if self.run:
-                if not self.run.tick(self.arm,self.data):
+                if not self.run.tick(self.arm,self.data,recorder=self.fea):
                     self.finish_sweep()
             elif self.goto:
                 g = self.goto
@@ -193,13 +225,15 @@ class Experiment:
                     self.message = (f'Reached {g["name"]}.' if error <= self.cfg['sweep']['tracking_tolerance_deg'] else f'Could not reach {g["name"]}: {error:.2f} deg error. Inspect motor limits.')
                     self.goto = None
                 else:
-                    step(self.arm,self.data,q,v)
+                    step(self.arm,self.data,q,v,recorder=self.fea,phase='go to '+g['name'])
                     self.command = q.copy()
             else:
                 delta = np.deg2rad(self.cfg['sweep']['jog_speed_deg_s'])*self.arm.model.opt.timestep
                 self.command += np.clip(self.target-self.command,-delta,delta)
-                step(self.arm,self.data,self.command)
+                step(self.arm,self.data,self.command,recorder=self.fea)
         except RuntimeError as exc:
+            if self.fea and self.fea.active:
+                self.fea.stop('Simulation error: '+str(exc))
             self.stop(str(exc))
             self.paused = True
             raise

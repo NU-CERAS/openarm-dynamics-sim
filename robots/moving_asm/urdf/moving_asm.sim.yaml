@@ -97,7 +97,7 @@ joints:
   - -180.0
   - 180.0
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
 - name: revolute_6
   type: continuous
   motor: '00'
@@ -105,7 +105,7 @@ joints:
   - -180.0
   - 180.0
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
 - name: revolute_7
   type: continuous
   motor: '00'
@@ -113,7 +113,7 @@ joints:
   - -180.0
   - 180.0
   kp_nm_rad: 60
-  kd_nm_s_rad: 6
+  kd_nm_s_rad: 5
 drive:
   torque_derating: 0.8
   speed_envelope: true
@@ -132,13 +132,13 @@ sweep:
   - 0.0
   - 0.0
   b_deg:
-  - 61.29999923728751
-  - 83.19999694807836
-  - 28.60000038160677
-  - 20.50000000044304
-  - -31.39999961796331
-  - -25.899999618380953
-  - 99.50000001309338
+  - 89.3000030517583
+  - 1.2607698323906816e-06
+  - 9.272764002051499e-07
+  - 2.6266204352233165e-06
+  - 7.012180939522903e-07
+  - 7.515160904508171e-07
+  - -5.739134802444146e-07
   duration_s: 3.0
   approach_s: 2.0
   settle_s: 1.0
