@@ -3,11 +3,17 @@
 # This avoids duplicate Cocoa classes and incompatible window pointers on macOS.
 from imgui_bundle import imgui
 import glfw
+import os
+import sys
+if sys.platform.startswith('linux'):
+    # The bundled GLFW creates GLX contexts. PyOpenGL would otherwise choose EGL
+    # whenever WAYLAND_DISPLAY is set (e.g. WSLg) and see no current context.
+    os.environ.setdefault('PYOPENGL_PLATFORM','glx')
 from OpenGL import GL
+from imgui_bundle.python_backends.opengl_backend_programmable import ProgrammablePipelineRenderer
 import ctypes
 from pathlib import Path
 import subprocess
-import sys
 import time
 import webbrowser
 import yaml
@@ -19,13 +25,16 @@ from .torque_charts import chart_width, draw_torque_charts
 from .fea import METRICS
 
 PANEL_WIDTH = 380
+# The Linux imgui-bundle wheel vendors a private libglvnd, so its native
+# OpenGL2 renderer never sees GLFW's context and uploads no font texture.
+# The PyOpenGL renderer draws through the same system GL as MuJoCo.
+PYTHON_RENDERER = sys.platform.startswith('linux')
 
 
 def open_editor(path):
     if sys.platform == 'darwin':
         subprocess.Popen(['open','-t',str(path)])
     elif sys.platform == 'win32':
-        import os
         os.startfile(str(path))
     else:
         subprocess.Popen(['xdg-open',str(path)])
@@ -457,7 +466,8 @@ class Window:
         imgui.get_style().font_scale_main=1.15
         self.address=ctypes.cast(window,ctypes.c_void_p).value
         imgui.backends.glfw_init_for_opengl(self.address,False)
-        imgui.backends.opengl2_init()
+        renderer = ProgrammablePipelineRenderer() if PYTHON_RENDERER else None
+        if renderer is None: imgui.backends.opengl2_init()
         glfw.set_key_callback(window,self.key)
         glfw.set_cursor_pos_callback(window,self.mouse_move)
         glfw.set_mouse_button_callback(window,self.mouse_button)
@@ -471,7 +481,8 @@ class Window:
             while not glfw.window_should_close(window):
                 now=time.monotonic();credit+=min(.1,now-previous);previous=now
                 glfw.poll_events()
-                imgui.backends.opengl2_new_frame();imgui.backends.glfw_new_frame();imgui.new_frame()
+                if renderer is None: imgui.backends.opengl2_new_frame()
+                imgui.backends.glfw_new_frame();imgui.new_frame()
                 logical_width,logical_height=glfw.get_window_size(window)
                 width,height=glfw.get_framebuffer_size(window)
                 self.panel(logical_height)
@@ -501,7 +512,9 @@ class Window:
                     GL.glClientActiveTexture(GL.GL_TEXTURE0)
                     GL.glDisable(GL.GL_FOG)
                     GL.glDisable(GL.GL_ALPHA_TEST)
-                    imgui.render();imgui.backends.opengl2_render_draw_data(imgui.get_draw_data())
+                    imgui.render()
+                    if renderer: renderer.render(imgui.get_draw_data())
+                    else: imgui.backends.opengl2_render_draw_data(imgui.get_draw_data())
                     glfw.swap_buffers(window)
                 else:
                     imgui.end_frame();glfw.wait_events_timeout(.05)
@@ -516,7 +529,9 @@ class Window:
                         self.experiment.export_fea()
                     except OSError as exc:
                         print(f'Could not save FEA recording on exit: {exc}', file=sys.stderr)
-            imgui.backends.opengl2_shutdown();imgui.backends.glfw_shutdown()
+            if renderer: renderer.shutdown()
+            else: imgui.backends.opengl2_shutdown()
+            imgui.backends.glfw_shutdown()
             imgui.destroy_context()
             self.context.free();self.scene = None
             glfw.destroy_window(window);glfw.terminate()
