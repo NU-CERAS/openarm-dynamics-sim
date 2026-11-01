@@ -63,6 +63,10 @@ class Window:
         self.fea_interface = 0
         self.fea_preview = None
         self.render_model = None
+        self.campaign_path = ''
+        self.campaign_metric = METRICS.index('force_N')
+        self.campaign_pause = True
+        self.campaign_both = False
 
     def render_resources(self, model=None):
         model = self.experiment.arm.model if model is None else model
@@ -205,6 +209,64 @@ class Window:
             self.act(e.export_fea, 'all')
         if recording.last_export:
             imgui.text_wrapped('Saved to '+str(recording.last_export))
+
+    def replay(self, peak, side):
+        value = peak['minimum' if side == 'min' else 'maximum']
+        label = f"{side} {peak['metric']} {value:.4g} at {peak['interface']}"
+        self.experiment.replay_sweep(peak[side+'_sweep'], peak[side+'_time_s'] if self.campaign_pause else None, label)
+        self.fea_preview = None
+
+    def campaign_panel(self):
+        e = self.experiment
+        if not imgui.collapsing_header('Campaign replay'):
+            return
+        imgui.begin_disabled(e.busy)
+        if imgui.button('Load latest campaign', (171, 28)): self.act(e.load_campaign)
+        imgui.same_line()
+        if imgui.button('Load folder', (171, 28)): self.act(e.load_campaign, self.campaign_path.strip() or None)
+        imgui.end_disabled()
+        imgui.set_next_item_width(350)
+        _, self.campaign_path = imgui.input_text('##campaign_path', self.campaign_path)
+        imgui.text_disabled(f'Latest searches {e.out.name}/ for this robot.')
+        c = e.campaign
+        if c is None:
+            imgui.text_wrapped('Run arm-sim campaign, then load its fea-* folder to replay the sweep behind each peak.')
+            return
+        s = c['settings']
+        imgui.text_wrapped(f"{c['folder'].name} | {s['counted']} of {s['sweeps']} sweeps counted")
+        imgui.set_next_item_width(170)
+        _, self.campaign_metric = imgui.combo('Load##campaign', self.campaign_metric, list(METRICS))
+        _, self.campaign_pause = imgui.checkbox('Pause at peak', self.campaign_pause)
+        imgui.same_line()
+        _, self.campaign_both = imgui.checkbox('Both sides', self.campaign_both)
+        # Magnitudes match on both receiving-body views; show the child side unless asked.
+        m = e.arm.model
+        name = lambda i: 'world' if i == 0 else (m.body(i).name or f'body_{i}')
+        primary = {f'{name(i)} <- {name(int(m.body_parentid[i]))}' for i in range(1, m.nbody)}
+        metric = METRICS[self.campaign_metric]
+        peaks = [p for p in c['peaks'] if p['metric'] == metric and (self.campaign_both or p['interface'] in primary)]
+        imgui.begin_disabled(e.busy)
+        if imgui.begin_table('Campaign peaks', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
+            for column in ('Connection', 'Minimum', 'Maximum'):
+                imgui.table_setup_column(column)
+            imgui.table_headers_row()
+            for k, peak in enumerate(peaks):
+                imgui.table_next_row()
+                imgui.table_set_column_index(0)
+                imgui.text(peak['interface'])
+                for column, side in ((1, 'min'), (2, 'max')):
+                    imgui.table_set_column_index(column)
+                    if imgui.small_button(f"{peak['minimum' if side == 'min' else 'maximum']:.4g}##campaign{k}{side}"):
+                        self.act(self.replay, peak, side)
+                    if imgui.is_item_hovered():
+                        sweep = c['sweeps'][peak[side+'_sweep']]
+                        imgui.set_tooltip(f"Replay sweep {peak[side+'_sweep']} ({sweep['duration_s']:.2f} s); "
+                                          f"peak at t={peak[side+'_time_s']:.3f} s")
+            imgui.end_table()
+        imgui.end_disabled()
+        if e.replay:
+            imgui.text_colored((1, .8, .3, 1), f"Replaying sweep {e.replay['sweep']}")
+        imgui.text_wrapped('Click a value to replay its sweep from rest at A. Saved A/B and duration are unchanged.')
 
     def geometry_popup(self):
         imgui.set_next_window_size((540,0))
@@ -359,6 +421,8 @@ class Window:
         if imgui.button('Stop / hold',(171,28)): self.act(e.stop)
         imgui.separator()
         self.fea_panel()
+        imgui.separator()
+        self.campaign_panel()
         imgui.separator()
         imgui.begin_disabled(e.busy)
         imgui.set_next_item_width(170)

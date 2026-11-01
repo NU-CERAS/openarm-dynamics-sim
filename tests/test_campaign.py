@@ -1,11 +1,14 @@
 import csv
 import json
+from copy import deepcopy
 
 import numpy as np
 import pytest
+import yaml
 
 from arm_design.campaign import Peaks, campaign, run_sweep
 from arm_design.config import load_config
+from arm_design.experiment import Experiment
 from arm_design.fea import METRICS
 from arm_design.model import build_arm
 
@@ -85,3 +88,30 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
 def yaml_unchanged(c):
     # Sweeps rewrite a private copy of the configuration, never the caller's.
     return c['sweep'] == quick_config()['sweep']
+
+
+def test_viewer_replay_pauses_on_the_exact_recorded_peak(tmp_path):
+    config = tmp_path/'arm.yaml'
+    config.write_text(yaml.safe_dump(quick_config(), sort_keys=False))
+    campaign(load_config(config), tmp_path/'results'/'nested', samples=0, iterations=0,
+             workers=1, log=lambda *a, **k: None)
+    e = Experiment(config, tmp_path/'results')
+    saved = deepcopy(e.cfg['sweep'])
+    e.load_campaign()
+    assert 'WARNING' not in e.message
+    peak = next(p for p in e.campaign['peaks'] if p['interface'] == 'link2 <- link1' and p['metric'] == 'moment_Nm')
+    e.replay_sweep(peak['max_sweep'], peak['max_time_s'], 'test')
+    assert e.cfg['sweep'] == saved
+    while not e.paused:
+        e.tick()
+    cases = json.loads((e.campaign['folder']/'load_cases.json').read_text())['samples']
+    case = cases[int(peak['max_sample'])]
+    np.testing.assert_array_equal(e.data.qpos, case['q_rad'])
+    np.testing.assert_array_equal(e.data.qvel, case['qvel_rad_s'])
+    e.paused = False
+    while e.run:
+        e.tick()
+    assert e.replay is None and e.last_report.exists() and e.cfg['sweep'] == saved
+    e.cfg['joints'][0]['kp_nm_rad'] += 1
+    e.load_campaign()
+    assert 'WARNING' in e.message

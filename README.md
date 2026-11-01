@@ -268,3 +268,16 @@ sweep's A/B poses, duration and tracking result; `campaign.json` lists the
 settings. These are the largest loads the search **found**, not a proven
 global maximum. Run more samples or iterations until the peaks stop increasing.
 Jogging and Go to A/B moves are not searched.
+
+To watch the sweeps behind the peaks, open the viewer for the same robot
+(`./scripts/start.sh`, with `--urdf` if the campaign used it) and expand
+**Campaign replay**. **Load latest campaign** finds the newest campaign for this
+robot anywhere under the output folder; **Load folder** opens the `fea-*` path
+typed below it. Choose a load (`force_N`, `moment_Nm`, Fx...Mz) to list each
+connection's campaign minimum and maximum. Click a value to replay the sweep that
+produced it. The replay starts at rest at A, exactly as in the campaign, and with
+**Pause at peak** it stops on the step where that peak occurred; Resume finishes
+the sweep and saves its usual report. **Both sides** also lists each connection's
+opposite receiving-body view. Replays never change your saved A/B or move
+duration. Loading warns if the model, drive or gain settings differ from the
+campaign's, because the replay uses the live model.
