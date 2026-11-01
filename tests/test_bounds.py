@@ -62,3 +62,22 @@ def test_bounds_export_reproduces_every_peak(tmp_path):
     assert json.loads((folder/'bounds.json').read_text())['max_contact_force_n'] == 80
     with pytest.raises(ValueError):
         bounds(cfg, tmp_path, max_force_n=0)
+
+
+def test_fea_setup_balances_and_names_fixed_and_applied_faces(tmp_path):
+    from arm_design.fea_cases import exports, part_cases, write_csv
+    folder, _ = bounds(load_config(CAD), tmp_path, poses=30, iterations=3, workers=2, max_force_n=100,
+                       log=lambda *a, **k: None)
+    assert [f.name for f in exports(folder)] == ['blocked', 'gravity']
+    for part, fixed, applied in (('part_3', 'rs06_1', ['rs06']), ('part_7', 'rs00_1', []), ('part_3', 'rs06', ['rs06_1'])):
+        cases = part_cases(folder/'blocked', part, None if fixed != 'rs06' else 'rs06')
+        assert cases
+        for c in cases:
+            assert c['fixed'] == fixed and [r['other'] for r in c['applied']] == applied
+            assert c['residual_n'] < 1e-9
+        # The tip contact acts on part_7 itself, so it becomes an applied load there.
+        assert (part == 'part_7') == all(c['contact'] is not None for c in cases)
+    write_csv(tmp_path/'setup.csv', cases)
+    assert len(list(csv.DictReader((tmp_path/'setup.csv').open()))) == 2*len(cases)
+    with pytest.raises(ValueError, match='cannot fix'):
+        part_cases(folder/'blocked', 'part_3', 'world')

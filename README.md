@@ -334,3 +334,30 @@ format (`peaks.csv`, `load_cases.*`; blocked samples also list the contact body,
 point and force). `summary.csv` compares the two, and `bounds.json` records the
 settings and assumptions. Combine these with the campaign's dynamic peaks and
 apply your safety factor. Velocities and accelerations are zero in both cases.
+
+### Setting up a part in FEA
+
+`fea-cases` turns any load-case export (a campaign `fea-*` folder, or a `bounds-*`
+folder or one of its `gravity`/`blocked` subfolders) into ready-to-enter FEA setups
+for one part:
+
+```bash
+.venv/bin/arm-sim fea-cases --results results/cad-bounds/bounds-<stamp> --part part_3
+```
+
+For each worst case of that part's connections (peak force and moment magnitudes;
+`--all-extremes` adds every Fx...Mz extreme), it prints:
+
+- **FIX:** the connection to constrain, by default the proximal one (toward the
+  base; `--fixed <body>` picks another). Its load is listed only as a check: FEA
+  computes that reaction.
+- **APPLY:** a remote force and moment from each other connection, about the listed
+  point, plus any contact force acting on this part.
+- **BODY:** the part's mass and the acceleration field to apply (gravity minus the
+  COM acceleration), plus angular velocity and acceleration for moving cases.
+- **Force balance residual:** should be about zero; it confirms the case and frames
+  are consistent.
+
+Everything is in the part's own link frame (the URDF/CAD part frame), in N, Nm and
+m. Each case is one instant, so never combine rows from different samples. The same
+table is saved as `fea_setup_<part>.csv` in each export folder.

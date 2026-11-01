@@ -5,7 +5,7 @@ from .config import DEFAULT_CONFIG, ROOT, load_config, validate
 
 def main():
     p=argparse.ArgumentParser(description='MuJoCo joint jogging and timed A/B sweeps')
-    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds'])
+    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds','fea-cases'])
     source=p.add_mutually_exclusive_group()
     source.add_argument('--config',type=Path,default=DEFAULT_CONFIG)
     source.add_argument('--urdf',type=Path,help='Import a fixed-base rotary robot; creates <robot>.sim.yaml beside the URDF')
@@ -27,7 +27,24 @@ def main():
     p.add_argument('--min-lever-m',type=float,default=.05,help='Bounds: nearest blocking point to a joint axis (default 0.05 m)')
     p.add_argument('--contacts',choices=['tip','all'],default='tip',help='Bounds: block only the tool tip (default) or also every moving body origin')
     p.add_argument('--max-contact-force-n',type=float,help='Bounds: design limit on the blocking force (default: motor-limited only)')
+    p.add_argument('--results',type=Path,help='fea-cases: a campaign fea-* folder or a bounds-* folder')
+    p.add_argument('--part',help='fea-cases: the body to set up for FEA, e.g. part_3')
+    p.add_argument('--fixed',help='fea-cases: connection to constrain (default: the proximal one, toward the base)')
+    p.add_argument('--all-extremes',action='store_true',help='fea-cases: include every Fx..Mz extreme, not just peak force/moment magnitudes')
     args=p.parse_args()
+    if args.command=='fea-cases':
+        if args.results is None or args.part is None:
+            p.error('fea-cases needs --results and --part.')
+        from .fea_cases import exports, part_cases, report, write_csv
+        try:
+            for folder in exports(args.results):
+                cases=part_cases(folder,args.part,args.fixed,args.all_extremes)
+                print(report(folder,args.part,cases)+'\n')
+                write_csv(folder/f'fea_setup_{args.part}.csv',cases)
+                print(f'Saved {folder/f"fea_setup_{args.part}.csv"}\n')
+        except (ValueError,OSError,KeyError) as exc:
+            p.error(str(exc))
+        return
     if args.package_root and args.urdf is None:
         p.error('--package-root requires --urdf; for saved configs edit urdf.package_roots in YAML.')
     if args.urdf is not None:
