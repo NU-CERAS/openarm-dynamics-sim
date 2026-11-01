@@ -238,3 +238,33 @@ For a reverse headless torque sweep:
 ```bash
 .venv/bin/arm-sim sweep --direction b-to-a
 ```
+
+### Worst-case loads across sweeps
+
+To find the largest interface forces and moments that any A -> B sweep can
+produce, run a campaign. It runs the saved A/B sweep in both directions, then
+random A/B poses within the joint limits with log-uniform move durations. Next it
+refines the worst sweep found for each link's force and moment magnitude:
+
+```bash
+.venv/bin/arm-sim campaign --samples 200 --iterations 20 --min-duration 0.1 --max-duration 5
+.venv/bin/arm-sim campaign --urdf robots/moving_asm/urdf/moving_asm.urdf --out results/cad-campaign
+```
+
+Each sweep starts at rest at A, settles, sweeps and holds. Only the sweep and hold
+are measured. By default a sweep counts only if it tracks within
+`sweep.tracking_tolerance_deg`. Commands the motors cannot follow end in
+joint-stop impacts, whose loads depend on MuJoCo's constraint softness, not on the
+drives. `--include-failed` counts them anyway. Sweeps run in parallel on all CPU
+cores (`--workers`); `--seed` makes a campaign repeatable. A sweep takes a few
+seconds of computer time per worker, so the default campaign (about 520 sweeps
+for the OpenArm model) takes several minutes.
+
+The result is an `fea-*` folder in the same format as the window's load-case
+export. `peaks.csv` gives each interface's extrema, plus the sweep
+(`min_sweep`/`max_sweep`) and load case that produced them. `load_cases.*` holds
+the complete simultaneous state at every extremum. `sweeps.csv` lists every
+sweep's A/B poses, duration and tracking result; `campaign.json` lists the
+settings. These are the largest loads the search **found**, not a proven
+global maximum. Run more samples or iterations until the peaks stop increasing.
+Jogging and Go to A/B moves are not searched.
