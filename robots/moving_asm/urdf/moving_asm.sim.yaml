@@ -67,11 +67,11 @@ joints:
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_2
-  type: continuous
+  type: revolute
   motor: '03'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -20.0
+  - 200.0
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_3
@@ -83,11 +83,11 @@ joints:
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_4
-  type: continuous
+  type: revolute
   motor: '06'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -135.0
+  - 135.0
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_5
@@ -99,19 +99,19 @@ joints:
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 - name: revolute_6
-  type: continuous
+  type: revolute
   motor: '00'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -90.0
+  - 50.0
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 - name: revolute_7
-  type: continuous
+  type: revolute
   motor: '00'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -56.0
+  - 70.0
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 drive:
