@@ -106,7 +106,8 @@ The saved `moving_asm.sim.yaml` includes the original
 P/D gains. URDF effort limits contain the peak torques; velocity limits contain
 the no-load speeds in rad/s. Mesh references use the sibling `meshes/` directory.
 Keep this curated `.sim.yaml` to retain the rated/peak distinction and drive settings.
-All seven joints are continuous. J7 rotates the real `part_7` CAD link on the
+J1, J3 and J5 are continuous. J2 (−20° to 200°), J4 (±135°), J6 (−90° to 50°)
+and J7 (−56° to 70°) are revolute with the real hardware limits. J7 rotates the real `part_7` CAD link on the
 `rs00_1` actuator; its housing stays fixed to `part_6`. The exported joint origins,
 axes, link geometry, and `part_7` mass/inertia are retained. The seventh link weighs
 **0.427991 kg**. No placeholder tool is added. The report's tracked point is the
@@ -118,28 +119,14 @@ proportionally to mass (a uniform-density approximation). Other CAD inertias/mas
 are retained. Total simulated mass, including the real seventh link, is **7.446340 kg**.
 The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
 
-> **TODO: set the CAD arm's real joint limits.** The Onshape mates have no
-> limits, so every joint is exported as continuous and the simulator allows
-> ±180° on all seven. Links never collide in the simulation (the CAD meshes
-> are visual-only and contacts are off). A convex-hull check found that about
-> 79% of random poses in that range put one part inside another. Campaign
-> results for this arm therefore include motions the real arm cannot make;
-> do not use them for FEA until the limits are set.
->
-> To find the limits, check each joint for whichever stops it first:
->
-> - **CAD:** rotate each joint in the Onshape assembly until parts interfere,
->   with neighboring joints at typical angles (some limits depend on pose).
-> - **Hardware:** hard stops, cable wind-up (no slip rings, so roughly ±180°
->   or less), and the table or base mount.
-> - **Motors:** any RobStride firmware position limits.
-> - **Starting point:** the OpenArm v1 limits in `configs/arm.yaml` (J1 −200
->   to 80°, J2 −190 to 10°, J3 ±90°, J4 0 to 140°, J5 ±90°, J6 ±45°, J7 ±90°).
->   Verify them against this CAD; zero positions may differ.
->
-> Enter them as `limits_deg` for each joint in
-> `robots/moving_asm/urdf/moving_asm.sim.yaml`, or set Onshape mate limits and
-> re-export. Then rerun the campaign.
+> **TODO: check CAD-arm sweeps for self-collision.** The real joint limits are
+> now set (above). Links still never collide in the simulation: the CAD meshes
+> are visual-only and contacts are off. Within the new limits, a convex-hull
+> check found that about 11% of random poses put one part inside another,
+> mostly `part_7` against `part_5` or the J6 housing (`rs00`) at certain wrist
+> angle combinations. Per-joint limits cannot exclude these, so CAD-arm
+> campaign results can still include impossible motions until the campaign
+> rejects self-colliding sweeps.
 
 ### Run both arm models
 
