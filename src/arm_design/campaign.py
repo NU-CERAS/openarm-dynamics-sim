@@ -4,9 +4,11 @@ from copy import deepcopy
 import csv
 import json
 import multiprocessing
+from pathlib import Path
 import time
 
 import numpy as np
+import yaml
 
 from .fea import FEARecording, METRICS
 from .model import build_arm
@@ -229,3 +231,33 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
                              s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], *s['a_deg'], *s['b_deg']])
     (folder/'campaign.json').write_text(json.dumps(settings, indent=2))
     return folder, rec
+
+
+def load_results(folder):
+    """A campaign export, parsed for replay: its config, every sweep and every peak."""
+    folder = Path(folder).expanduser().resolve()
+    if not (folder/'campaign.json').exists():
+        raise ValueError(f'{folder} is not a campaign export (no campaign.json).')
+    cfg = yaml.safe_load((folder/'config.yaml').read_text())
+    names = [j['name'] for j in cfg['joints']]
+    with (folder/'sweeps.csv').open() as f:
+        sweeps = [dict(stage=row['stage'], duration_s=float(row['duration_s']),
+                       counted=row['counted'] == 'True', tracking_ok=row['tracking_ok'] == 'True',
+                       a_deg=[float(row[f'a_{n}_deg']) for n in names],
+                       b_deg=[float(row[f'b_{n}_deg']) for n in names]) for row in csv.DictReader(f)]
+    with (folder/'peaks.csv').open() as f:
+        peaks = [dict(row, minimum=float(row['minimum']), maximum=float(row['maximum']),
+                      min_sweep=int(row['min_sweep']), max_sweep=int(row['max_sweep']),
+                      min_time_s=float(row['min_time_s']), max_time_s=float(row['max_time_s']))
+                 for row in csv.DictReader(f)]
+    return dict(folder=folder, cfg=cfg, settings=json.loads((folder/'campaign.json').read_text()),
+                sweeps=sweeps, peaks=peaks)
+
+
+def latest_results(root, joints):
+    """Newest campaign export anywhere under root that was run on these joints."""
+    for path in sorted(Path(root).glob('**/campaign.json'), key=lambda p: p.stat().st_mtime, reverse=True):
+        cfg = yaml.safe_load((path.parent/'config.yaml').read_text())
+        if [j['name'] for j in cfg['joints']] == list(joints):
+            return path.parent
+    raise ValueError(f'No campaign for this robot under {root}. Run arm-sim campaign first.')

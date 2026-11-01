@@ -9,6 +9,7 @@ from .model import build_arm
 from .simulation import Sweep, smooth_move, step
 from .reporting import save_result, summary
 from .fea import FEARecording
+from .campaign import latest_results, load_results
 
 
 class Experiment:
@@ -16,6 +17,7 @@ class Experiment:
         self.path, self.out = Path(path), Path(out)
         self.last_report = None
         self.fea = None
+        self.campaign = None
         self.message = 'Jog to a pose, then click Save A or Save B.'
         self.load()
 
@@ -29,6 +31,7 @@ class Experiment:
         self.target = self.data.qpos.copy()
         self.command = self.target.copy()
         self.run = None
+        self.replay = None
         self.goto = None
         self.paused = False
         self.history = deque(maxlen=600)
@@ -185,12 +188,54 @@ class Experiment:
         self.message = f'FEA export saved: {folder}'
         print(self.message, flush=True)
 
+    def load_campaign(self, folder=None):
+        self.idle_required()
+        names = [j['name'] for j in self.cfg['joints']]
+        result = load_results(folder or latest_results(self.out, names))
+        if [j['name'] for j in result['cfg']['joints']] != names:
+            raise ValueError('That campaign was run on a different robot; launch the viewer with its model.')
+        self.campaign = result
+        s = result['settings']
+        self.message = f"Loaded campaign {result['folder'].name}: {s['counted']} of {s['sweeps']} sweeps counted. Click a peak to replay its sweep."
+        # Replays use the live model and gains, so a different config gives different loads.
+        if {k: v for k, v in result['cfg'].items() if k != 'sweep'} != {k: v for k, v in self.cfg.items() if k != 'sweep'}:
+            self.message += ' WARNING: model, drive or gain settings differ from that campaign; replayed loads will differ.'
+
+    def replay_sweep(self, sweep_id, pause_at=None, label=''):
+        """Rerun a campaign sweep exactly as the campaign did: at rest at A from time zero."""
+        self.idle_required()
+        if self.campaign is None:
+            raise ValueError('Load a campaign first.')
+        if self.fea and self.fea.active:
+            raise ValueError('Stop FEA recording before replaying a campaign sweep.')
+        s = self.campaign['sweeps'][sweep_id]
+        saved = self.cfg['sweep']
+        # Sweep snapshots the config, so the saved A/B and duration are never changed.
+        self.cfg['sweep'] = dict(saved, a_deg=s['a_deg'], b_deg=s['b_deg'],
+                                 duration_s=s['duration_s'], approach_s=.1)
+        try:
+            data = self.arm.data()
+            run = Sweep(self.arm, data)
+        finally:
+            self.cfg['sweep'] = saved
+        self.data, self.run = data, run
+        self.target = data.qpos.copy()
+        self.command = self.target.copy()
+        self.goto = None
+        self.history.clear()
+        self.replay = dict(sweep=sweep_id, pause_at=pause_at, label=label)
+        self.paused = False
+        self.message = f"Replaying campaign sweep {sweep_id} ({s['duration_s']:.2f} s A -> B)" + (f': {label}' if label else '') + '.'
+
     def finish_sweep(self):
+        replay, self.replay = self.replay, None
         folder = save_result(self.arm,self.run,self.out)
         self.last_report = folder/'report.html'
         result = summary(self.run)
         self.message = ('Sweep finished; tracking within tolerance.' if result['tracking_ok'] else self.run.reason or 'Sweep finished; tracking exceeded tolerance.')
         self.message += ' Open the report to inspect motor loads.'
+        if replay:
+            self.message = f"Campaign sweep {replay['sweep']} replay finished. " + self.message
         print(self.message+' '+str(self.last_report),flush=True)
         self.run = None
         self.target = self.data.qpos.copy()
@@ -212,6 +257,14 @@ class Experiment:
             return
         try:
             if self.run:
+                r = self.replay
+                # Pause BEFORE stepping: this pre-step state is exactly the recorded peak sample.
+                if r and r['pause_at'] is not None and self.data.time + 1e-9 >= r['pause_at']:
+                    r['pause_at'] = None
+                    self.paused = True
+                    mujoco.mj_forward(self.arm.model, self.data)
+                    self.message = f"Paused at the peak (t={self.data.time:.3f} s): {r['label']}. Resume to finish the sweep."
+                    return
                 if not self.run.tick(self.arm,self.data,recorder=self.fea):
                     self.finish_sweep()
             elif self.goto:
