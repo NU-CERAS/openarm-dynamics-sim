@@ -8,7 +8,7 @@ import mujoco
 import numpy as np
 import yaml
 
-from .config import load_config, positive, vector
+from .config import header, load_config, portable, positive, vector
 
 
 def resolve_asset(filename, urdf_path, package_roots=(), meshdir=''):
@@ -225,9 +225,10 @@ def prepare_urdf_config(path, package_roots=()):
             c['sweep']['b_deg'].append(initial)
     from .model import build_arm
     build_arm(c)  # Don't leave a settings file behind for an invalid import.
-    serialized = '# Controls for an imported URDF. Angles are degrees; source URDF uses SI units.\n'
-    serialized += '# Geometry/inertia live in the URDF. Reload YAML reimports it.\n'
-    serialized += yaml.safe_dump(c, sort_keys=False)
+    # Keep a curated file's own comments; only new files get the generic header.
+    serialized = header(settings, '# Controls for an imported URDF. Angles are degrees; source URDF uses SI units.\n'
+                                  '# Geometry/inertia live in the URDF. Reload YAML reimports it.\n')
+    serialized += yaml.safe_dump(portable(c, settings), sort_keys=False)
     if not settings.exists() or load_config(settings) != c:
         temporary = settings.with_suffix('.yaml.tmp')
         temporary.write_text(serialized)

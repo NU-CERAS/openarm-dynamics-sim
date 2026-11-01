@@ -1,4 +1,5 @@
 """The editable YAML is the single source of model and experiment parameters."""
+from copy import deepcopy
 from pathlib import Path
 import numpy as np
 import yaml
@@ -112,6 +113,30 @@ def load_config(path=DEFAULT_CONFIG):
     return c
 
 
+def portable(c, path):
+    """Store a sibling URDF relative to its settings file so the file works on any machine."""
+    if c.get('model_type') != 'urdf':
+        return c
+    c = deepcopy(c)
+    try:
+        c['urdf']['path'] = Path(c['urdf']['path']).relative_to(Path(path).resolve().parent).as_posix()
+    except ValueError:
+        pass
+    return c
+
+
+def header(path, default=''):
+    """Leading comment lines; safe_dump preserves values, not comments."""
+    if not Path(path).exists():
+        return default
+    lines = []
+    for line in Path(path).read_text().splitlines():
+        if not line.startswith('#'):
+            break
+        lines.append(line+'\n')
+    return ''.join(lines)
+
+
 def save_sweep(path, sweep):
     save_controls(path, sweep)
 
@@ -148,13 +173,7 @@ def save_controls(path, sweep_updates=None, gains=None, geometry=None):
     if geometry is not None:
         merge_geometry(c,geometry)
     validate(c)
-    # Keep the explanatory header; safe_dump preserves values, not inline comments.
-    header = []
-    for line in path.read_text().splitlines():
-        if not line.startswith('#'):
-            break
-        header.append(line)
-    text = '\n'.join(header) + '\n' + yaml.safe_dump(c, sort_keys=False)
+    text = header(path) + yaml.safe_dump(portable(c, path), sort_keys=False)
     tmp = path.with_suffix('.yaml.tmp')
     tmp.write_text(text)
     tmp.replace(path)
