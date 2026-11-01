@@ -21,6 +21,8 @@ def main():
     p.add_argument('--workers',type=int,help='Campaign: parallel processes (default: CPU count)')
     p.add_argument('--seed',type=int,default=0,help='Campaign: random seed')
     p.add_argument('--include-failed',action='store_true',help='Campaign: also count sweeps that exceed tracking tolerance (joint-stop impacts)')
+    p.add_argument('--max-overlap-mm',type=float,default=0.,help='Campaign: largest convex-hull overlap allowed before a pose counts as self-colliding (default 0)')
+    p.add_argument('--allow-self-collision',action='store_true',help='Campaign: skip the self-collision check')
     args=p.parse_args()
     if args.package_root and args.urdf is None:
         p.error('--package-root requires --urdf; for saved configs edit urdf.package_roots in YAML.')
@@ -47,10 +49,14 @@ def main():
         from .campaign import campaign
         from .fea import METRICS
         try:
-            folder,rec=campaign(c,args.out,args.samples,args.iterations,(args.min_duration,args.max_duration),args.workers,args.seed,args.include_failed)
+            folder,rec=campaign(c,args.out,args.samples,args.iterations,(args.min_duration,args.max_duration),args.workers,args.seed,args.include_failed,
+                                None if args.allow_self_collision else args.max_overlap_mm)
         except (ValueError,RuntimeError) as exc:
             p.error(str(exc))
-        print(f'{rec.settings["counted"]} of {rec.settings["sweeps"]} sweeps counted (tracking within {rec.settings["tracking_tolerance_deg"]:g} deg)')
+        st=rec.settings
+        print(f'{st["counted"]} of {st["sweeps"]} sweeps counted (tracking within {st["tracking_tolerance_deg"]:g} deg)')
+        if st['max_overlap_mm'] is not None:
+            print(f'Self-collision: {st["colliding_paths_skipped"]} colliding random paths skipped, {st["collided"]} sweeps stopped mid-motion')
         print(f'{"interface":32} {"max force N":>12} {"max moment Nm":>14}  sweeps')
         f,mo=METRICS.index('force_N'),METRICS.index('moment_Nm')
         for i,interface in enumerate(rec.interfaces):

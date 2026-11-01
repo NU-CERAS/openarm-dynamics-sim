@@ -119,14 +119,11 @@ proportionally to mass (a uniform-density approximation). Other CAD inertias/mas
 are retained. Total simulated mass, including the real seventh link, is **7.446340 kg**.
 The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
 
-> **TODO: check CAD-arm sweeps for self-collision.** The real joint limits are
-> now set (above). Links still never collide in the simulation: the CAD meshes
-> are visual-only and contacts are off. Within the new limits, a convex-hull
-> check found that about 11% of random poses put one part inside another,
-> mostly `part_7` against `part_5` or the J6 housing (`rs00`) at certain wrist
-> angle combinations. Per-joint limits cannot exclude these, so CAD-arm
-> campaign results can still include impossible motions until the campaign
-> rejects self-colliding sweeps.
+> **Self-collision:** links never collide in the physics (the CAD meshes are
+> visual-only and contacts are off). Within the joint limits, about 4% of random
+> poses put one part inside another, mostly `part_7` against `part_5` at certain
+> wrist angle combinations. Per-joint limits cannot exclude these; the campaign's
+> self-collision check (below) rejects them.
 
 ### Run both arm models
 
@@ -261,6 +258,16 @@ refines the worst sweep found for each link's force and moment magnitude:
 .venv/bin/arm-sim campaign --urdf robots/moving_asm/urdf/moving_asm.urdf --out results/cad-campaign
 ```
 
+The campaign rejects self-colliding motion. A copy of the model with every
+geom colliding (CAD meshes as convex hulls, plus the floor) checks each random
+A -> B path before simulating it, then the simulated motion every 5 ms, which
+catches overshoot. Colliding paths are redrawn and colliding sweeps are stopped
+and never counted. Body pairs touching in the zero pose are treated as designed
+overlaps and ignored (for the built-in model, the J1 housing on `base` with
+`link1`). `--max-overlap-mm` (default 0) allows small overlaps; hulls are
+conservative, so 1-2 mm accepts near-misses they misjudge. `--allow-self-collision`
+turns the check off. Contacts never act in the physics, so loads are unchanged.
+
 Each sweep starts at rest at A, settles, sweeps and holds. Only the sweep and hold
 are measured. By default a sweep counts only if it tracks within
 `sweep.tracking_tolerance_deg`. Commands the motors cannot follow end in
@@ -274,7 +281,7 @@ The result is an `fea-*` folder in the same format as the window's load-case
 export. `peaks.csv` gives each interface's extrema, plus the sweep
 (`min_sweep`/`max_sweep`) and load case that produced them. `load_cases.*` holds
 the complete simultaneous state at every extremum. `sweeps.csv` lists every
-sweep's A/B poses, duration and tracking result; `campaign.json` lists the
+sweep's A/B poses, duration, tracking result and any collision; `campaign.json` lists the
 settings. These are the largest loads the search **found**, not a proven
 global maximum. Run more samples or iterations until the peaks stop increasing.
 Jogging and Go to A/B moves are not searched.

@@ -7,7 +7,8 @@ import pytest
 import yaml
 
 from arm_design.campaign import Peaks, campaign, run_sweep
-from arm_design.config import load_config
+from arm_design.collision import CollisionChecker
+from arm_design.config import ROOT, load_config
 from arm_design.experiment import Experiment
 from arm_design.fea import METRICS
 from arm_design.model import build_arm
@@ -115,3 +116,30 @@ def test_viewer_replay_pauses_on_the_exact_recorded_peak(tmp_path):
     e.cfg['joints'][0]['kp_nm_rad'] += 1
     e.load_campaign()
     assert 'WARNING' in e.message
+
+
+CAD = ROOT/'robots/moving_asm/urdf/moving_asm.sim.yaml'
+def test_checker_finds_folded_wrist_and_ignores_designed_overlaps():
+    cad = CollisionChecker(build_arm(load_config(CAD)))
+    assert cad.ignored == set() and cad.contacts(np.zeros(7)) == {}
+    hit = cad.contacts(np.deg2rad([0, 0, 0, 0, 90, -90, -56]))
+    assert ('part_5', 'part_7') in hit and hit[('part_5', 'part_7')] > 1
+    assert ('part_5', 'part_7') not in CollisionChecker(build_arm(load_config(CAD)), 1e3).contacts(
+        np.deg2rad([0, 0, 0, 0, 90, -90, -56]))
+    assert cad.path_contacts(np.zeros(7), [0, 0, 0, 0, 90, -90, -56])
+    # The built-in J1 housing always overlaps link1 by design.
+    builtin = CollisionChecker(build_arm(load_config()))
+    assert builtin.ignored == {('base', 'link1')}
+    assert builtin.contacts(np.deg2rad(load_config()['sweep']['b_deg'])) == {}
+
+
+def test_colliding_sweeps_stop_and_never_count():
+    c = load_config(CAD)
+    c['sweep'].update(settle_s=.5, hold_s=.2)
+    arm = build_arm(c)
+    checker = CollisionChecker(arm)
+    r = run_sweep(arm, np.zeros(7), [0, 0, 0, 0, 90, -90, -56], 2., checker=checker)
+    assert not r['completed'] and not r['counted'] and 'part_5-part_7' in r['collision']
+    assert r['reason'].startswith('Self-collision')
+    clear = run_sweep(arm, np.zeros(7), [30, 20, 0, 30, 0, 0, 0], 2., checker=checker)
+    assert clear['counted'] and clear['collision'] == ''
