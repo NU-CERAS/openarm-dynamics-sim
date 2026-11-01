@@ -118,6 +118,29 @@ proportionally to mass (a uniform-density approximation). Other CAD inertias/mas
 are retained. Total simulated mass, including the real seventh link, is **7.446340 kg**.
 The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
 
+> **TODO: set the CAD arm's real joint limits.** The Onshape mates have no
+> limits, so every joint is exported as continuous and the simulator allows
+> ±180° on all seven. Links never collide in the simulation (the CAD meshes
+> are visual-only and contacts are off). A convex-hull check found that about
+> 79% of random poses in that range put one part inside another. Campaign
+> results for this arm therefore include motions the real arm cannot make;
+> do not use them for FEA until the limits are set.
+>
+> To find the limits, check each joint for whichever stops it first:
+>
+> - **CAD:** rotate each joint in the Onshape assembly until parts interfere,
+>   with neighboring joints at typical angles (some limits depend on pose).
+> - **Hardware:** hard stops, cable wind-up (no slip rings, so roughly ±180°
+>   or less), and the table or base mount.
+> - **Motors:** any RobStride firmware position limits.
+> - **Starting point:** the OpenArm v1 limits in `configs/arm.yaml` (J1 −200
+>   to 80°, J2 −190 to 10°, J3 ±90°, J4 0 to 140°, J5 ±90°, J6 ±45°, J7 ±90°).
+>   Verify them against this CAD; zero positions may differ.
+>
+> Enter them as `limits_deg` for each joint in
+> `robots/moving_asm/urdf/moving_asm.sim.yaml`, or set Onshape mate limits and
+> re-export. Then rerun the campaign.
+
 ### Run both arm models
 
 The original arm's structural link masses now match the CAD URDF's `part_1` through
