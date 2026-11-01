@@ -10,6 +10,7 @@ import time
 import numpy as np
 import yaml
 
+from .collision import CollisionChecker, describe
 from .fea import FEARecording, METRICS
 from .model import build_arm
 from .reporting import summary
@@ -19,19 +20,26 @@ from .simulation import Sweep
 OBJECTIVES = (METRICS.index('force_N'), METRICS.index('moment_Nm'))
 _arm = None
 _include_failed = False
+_checker = None
+# Physics samples between collision checks of the simulated motion (5 ms at 1 kHz).
+CHECK_EVERY = 5
+# Perturbations tried per refinement iteration before giving up on a collision-free path.
+PATH_TRIES = 50
 
 
-def _init(cfg, include_failed=False):
-    global _arm, _include_failed
+def _init(cfg, include_failed=False, max_overlap_mm=0.):
+    global _arm, _include_failed, _checker
     # Sweeps rewrite arm.cfg['sweep']; never alias the caller's configuration.
     _arm, _include_failed = build_arm(deepcopy(cfg)), include_failed
+    _checker = None if max_overlap_mm is None else CollisionChecker(_arm, max_overlap_mm)
 
 
-def run_sweep(arm, a, b, duration, include_failed=False):
+def run_sweep(arm, a, b, duration, include_failed=False, checker=None):
     """One recorded A -> B sweep starting at rest at A; only sweep+hold loads count.
 
     By default a sweep counts only if it tracks within tolerance: commands the
-    arm cannot follow end in joint-stop impacts, not motor-driven sweep loads."""
+    arm cannot follow end in joint-stop impacts, not motor-driven sweep loads.
+    With a checker, a sweep whose simulated motion self-collides is stopped."""
     s = arm.cfg['sweep']
     # Starting at A makes the approach trivial; settle still removes gravity sag.
     s.update(a_deg=[float(x) for x in a], b_deg=[float(x) for x in b],
@@ -41,14 +49,20 @@ def run_sweep(arm, a, b, duration, include_failed=False):
     rec = FEARecording(arm, data)
     rec.phases = ('sweep', 'hold')
     result = dict(a_deg=s['a_deg'], b_deg=s['b_deg'], duration_s=float(duration))
+    collision = {}
     try:
         while run.tick(arm, data, recorder=rec):
-            pass
+            # Overshoot can collide even when the planned path is clear.
+            if checker and len(run.rows) % CHECK_EVERY == 0 and run.rows[-1]['phase'] in rec.phases:
+                collision = checker.contacts(data.qpos)
+                if collision:
+                    run.reason = 'Self-collision: '+describe(collision)
+                    break
     except RuntimeError as exc:
         run.reason = str(exc)
     rec.stop(run.reason)
     s = summary(run)
-    result.update(completed=bool(run.complete and rec.rows), reason=run.reason,
+    result.update(completed=bool(run.complete and rec.rows), reason=run.reason, collision=describe(collision),
                   tracking_ok=s['tracking_ok'], samples=len(rec.rows),
                   max_tracking_error_deg=rec.max_tracking_error_deg,
                   saturated_samples=rec.saturated_samples, contact_samples=rec.contact_samples)
@@ -62,7 +76,7 @@ def run_sweep(arm, a, b, duration, include_failed=False):
 
 
 def _sweep(params):
-    return [run_sweep(_arm, *params, _include_failed)]
+    return [run_sweep(_arm, *params, _include_failed, _checker)]
 
 
 def score(result, interface, metric):
@@ -76,10 +90,16 @@ def _refine(job):
     rng = np.random.default_rng(job['seed'])
     best, sigma, results = job['score'], .1, []
     for _ in range(job['iterations']):
-        ta = np.clip(a + rng.normal(0, sigma, a.shape)*(hi-lo), lo, hi)
-        tb = np.clip(b + rng.normal(0, sigma, b.shape)*(hi-lo), lo, hi)
+        for _ in range(PATH_TRIES):
+            ta = np.clip(a + rng.normal(0, sigma, a.shape)*(hi-lo), lo, hi)
+            tb = np.clip(b + rng.normal(0, sigma, b.shape)*(hi-lo), lo, hi)
+            if _checker is None or not _checker.path_contacts(ta, tb):
+                break
+        else:
+            sigma = max(sigma*.85, .005)
+            continue
         td = float(np.clip(duration*np.exp(rng.normal(0, sigma*3)), *job['duration_range']))
-        result = run_sweep(_arm, ta, tb, td, _include_failed)
+        result = run_sweep(_arm, ta, tb, td, _include_failed, _checker)
         results.append(result)
         value = score(result, job['interface'], job['metric'])
         if value > best:
@@ -151,26 +171,44 @@ class CampaignRecording(FEARecording):
         meta['limitations'] = meta['limitations'] + [
             'Sampled search over A/B poses and durations: the largest loads FOUND, not a proven global maximum.',
             'Only A -> B sweeps from rest, plus the final hold, are searched; jogging and Go to A/B are not.',
-            'Unless include_failed is set, only sweeps that tracked within tolerance contribute loads.']
+            'Unless include_failed is set, only sweeps that tracked within tolerance contribute loads.',
+            'Self-collision uses convex hulls of the meshes (conservative); pairs touching at the reference pose are ignored. Contacts never act in the physics.']
         return meta
 
 
 def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), workers=None, seed=0,
-             include_failed=False, log=print):
+             include_failed=False, max_overlap_mm=0., log=print):
+    """max_overlap_mm=None disables the self-collision check."""
     lo_d, hi_d = duration_range
     if not .1 <= lo_d <= hi_d <= 120:
         raise ValueError('Durations must satisfy 0.1 <= minimum <= maximum <= 120 seconds.')
     if samples < 0 or iterations < 0:
         raise ValueError('Sample and iteration counts must be nonnegative.')
+    if max_overlap_mm is not None and not max_overlap_mm >= 0:
+        raise ValueError('Allowed overlap must be a nonnegative number of millimetres.')
     workers = workers or multiprocessing.cpu_count()
     arm = build_arm(deepcopy(cfg))
     limits = np.array([j['limits_deg'] for j in cfg['joints']], float)
     rng = np.random.default_rng(seed)
     s = cfg['sweep']
+    checker = None if max_overlap_mm is None else CollisionChecker(arm, max_overlap_mm)
+    rejected = 0
+
+    def draw():
+        nonlocal rejected
+        # Redraw until the planned path is collision-free; the simulated motion is checked again.
+        for _ in range(1000):
+            a, b = rng.uniform(limits[:, 0], limits[:, 1]), rng.uniform(limits[:, 0], limits[:, 1])
+            if checker is None or not checker.path_contacts(a, b):
+                return a, b
+            rejected += 1
+        raise RuntimeError('No collision-free A/B path in 1000 tries; check the joint limits.')
+
     # Saved A/B in both directions first, then random poses with log-uniform durations.
     jobs = [(s['a_deg'], s['b_deg'], s['duration_s']), (s['b_deg'], s['a_deg'], s['duration_s'])]
-    jobs += [(rng.uniform(limits[:, 0], limits[:, 1]), rng.uniform(limits[:, 0], limits[:, 1]),
-              float(np.exp(rng.uniform(np.log(lo_d), np.log(hi_d))))) for _ in range(samples)]
+    if checker and checker.path_contacts(s['a_deg'], s['b_deg']):
+        log('Saved A -> B path self-collides: '+describe(checker.path_contacts(s['a_deg'], s['b_deg'])), flush=True)
+    jobs += [(*draw(), float(np.exp(rng.uniform(np.log(lo_d), np.log(hi_d))))) for _ in range(samples)]
     recorder = FEARecording(arm, arm.data())
     interfaces = recorder.interfaces
     peaks = Peaks((len(interfaces), len(METRICS)))
@@ -199,14 +237,14 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         return result
 
     if workers == 1:
-        _init(cfg, include_failed)
+        _init(cfg, include_failed, max_overlap_mm)
         for k, job in enumerate(jobs):
             collect(_sweep(job), 'saved' if k < 2 else 'random')
         if iterations:
             collect([r for job in refine_jobs() for r in _refine(job)], 'refine')
     else:
         context = multiprocessing.get_context('spawn')
-        with ProcessPoolExecutor(workers, context, _init, (cfg, include_failed)) as pool:
+        with ProcessPoolExecutor(workers, context, _init, (cfg, include_failed, max_overlap_mm)) as pool:
             for k, results in enumerate(pool.map(_sweep, jobs, chunksize=1)):
                 collect(results, 'saved' if k < 2 else 'random')
             if iterations:
@@ -218,17 +256,20 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
                     seed=seed, sweeps=len(sweeps), completed=sum(s['completed'] for s in sweeps),
                     tracking_ok=sum(s['tracking_ok'] for s in sweeps), counted=sum(s['counted'] for s in sweeps),
                     include_failed=include_failed, tracking_tolerance_deg=cfg['sweep']['tracking_tolerance_deg'],
+                    max_overlap_mm=max_overlap_mm, colliding_paths_skipped=rejected,
+                    collided=sum(bool(s['collision']) for s in sweeps),
+                    ignored_pairs=sorted(map(list, checker.ignored)) if checker else [],
                     measured_phases=['sweep', 'hold'])
     rec = CampaignRecording(arm, peaks, sweeps, settings)
     folder = rec.export(out, 'cases')
     with (folder/'sweeps.csv').open('w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['sweep', 'stage', 'duration_s', 'completed', 'tracking_ok', 'counted', 'max_tracking_error_deg',
-                         'saturated_samples', 'reason', *(f'a_{j["name"]}_deg' for j in cfg['joints']),
+                         'saturated_samples', 'reason', 'collision', *(f'a_{j["name"]}_deg' for j in cfg['joints']),
                          *(f'b_{j["name"]}_deg' for j in cfg['joints'])])
         for i, s in enumerate(sweeps):
             writer.writerow([i, s['stage'], s['duration_s'], s['completed'], s['tracking_ok'],
-                             s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], *s['a_deg'], *s['b_deg']])
+                             s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], s['collision'], *s['a_deg'], *s['b_deg']])
     (folder/'campaign.json').write_text(json.dumps(settings, indent=2))
     return folder, rec
 
