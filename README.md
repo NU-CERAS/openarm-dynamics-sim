@@ -298,3 +298,39 @@ the sweep and saves its usual report. **Both sides** also lists each connection'
 opposite receiving-body view. Replays never change your saved A/B or move
 duration. Loading warns if the model, drive or gain settings differ from the
 campaign's, because the replay uses the live model.
+
+### Static bounding loads
+
+The campaign measures loads during successful sweeps. Structural design must also
+cover events it excludes on purpose. `bounds` computes two static load cases that
+need no random sweeps:
+
+```bash
+.venv/bin/arm-sim bounds --max-contact-force-n 200
+.venv/bin/arm-sim bounds --urdf robots/moving_asm/urdf/moving_asm.urdf --max-contact-force-n 200
+```
+
+- **gravity:** the arm holding a pose against gravity alone, searched for the worst
+  pose of every connection.
+- **blocked:** an obstacle stops the tool tip while the motors push. The obstacle
+  force is tangent to one joint's rotation and as large as every motor can resist
+  at full peak torque (`--derated` uses the YAML derating), capped at
+  `--max-contact-force-n`. `--contacts all` also blocks every moving body origin
+  (a pinch along the arm), and `--min-lever-m` (default 0.05 m) skips points
+  closer than that to the blocked joint's axis.
+
+Set `--max-contact-force-n` to a design value: a requirement, collision-detection
+threshold or tip-force rating. Without it, aligned poses (like a straight arm
+pressing on a table, or a toggle clamp) let small torques resist huge forces, so
+the blocked loads have no real ceiling and grow with more sampling. For reference,
+the CAD arm's motors resist a median of about 200 N at the tip across random poses
+and directions, and about 125 N in its weakest direction at full reach.
+
+Both cases reject self-colliding poses and poses a motor cannot hold. They start
+with `--samples` random poses (default 2000), then refine each connection's worst
+force and moment over `--iterations` poses (default 300). The run takes seconds.
+Results go to `bounds-*/gravity/` and `bounds-*/blocked/`, each in the usual load-case
+format (`peaks.csv`, `load_cases.*`; blocked samples also list the contact body,
+point and force). `summary.csv` compares the two, and `bounds.json` records the
+settings and assumptions. Combine these with the campaign's dynamic peaks and
+apply your safety factor. Velocities and accelerations are zero in both cases.

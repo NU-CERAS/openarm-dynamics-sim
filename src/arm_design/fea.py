@@ -86,10 +86,8 @@ class FEARecording:
         if self.active:
             self.events.append(dict(time_s=float(time)-self.start_time, name=name, value=value))
 
-    def capture(self, m, d, row, phase):
-        if not self.active or (self.phases and phase.rsplit(': ', 1)[-1] not in self.phases):
-            return
-        mujoco.mj_rnePostConstraint(m, d)
+    def interface_loads(self, m, d):
+        """Local [force, moment] and application point per interface; needs mj_rnePostConstraint first."""
         rotations = d.xmat.reshape((-1, 3, 3))
         loads, points = [], []
         for interface in self.interfaces:
@@ -101,7 +99,14 @@ class FEARecording:
             loads.append(local_wrench(interface['sign']*d.cfrc_int[child],
                                       reference, point, rotations[body]))
             points.append(rotations[body].T@(point-d.xpos[body]))
-        loads, points = np.asarray(loads), np.asarray(points)
+        return np.asarray(loads), np.asarray(points)
+
+    def capture(self, m, d, row, phase):
+        if not self.active or (self.phases and phase.rsplit(': ', 1)[-1] not in self.phases):
+            return
+        mujoco.mj_rnePostConstraint(m, d)
+        rotations = d.xmat.reshape((-1, 3, 3))
+        loads, points = self.interface_loads(m, d)
         velocities, accelerations, external = [], [], []
         for body in self.body_ids:
             velocity, acceleration = np.zeros(6), np.zeros(6)
@@ -191,14 +196,14 @@ class FEARecording:
                          inertial_frame_quaternion_wxyz=m.body_iquat[i].tolist()) for i in self.body_ids],
             interfaces=self.interfaces, joints=[j['name'] for j in self.cfg['joints']])
 
-    def export(self, out, kind='all'):
+    def export(self, out, kind='all', name=None):
         if self.active:
             raise ValueError('Stop recording before exporting.')
         if not self.rows:
             raise ValueError('No FEA samples to export.')
         if kind not in ('all', 'peaks', 'cases'):
             raise ValueError('Unknown FEA export type.')
-        folder = Path(out).resolve() / ('fea-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S-%fZ'))
+        folder = Path(out).resolve() / (name or 'fea-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S-%fZ'))
         folder.mkdir(parents=True)
         (folder/'metadata.json').write_text(json.dumps(self.metadata(), indent=2))
         (folder/'config.yaml').write_text(yaml.safe_dump(self.cfg, sort_keys=False))
