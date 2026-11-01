@@ -21,10 +21,15 @@ def jsonable(value):
     raise TypeError(f'Cannot serialize {type(value)}')
 
 
+def cross(a, b):
+    # np.cross's axis handling dominated per-step recording cost for 3-vectors.
+    return np.array((a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]))
+
+
 def local_wrench(wrench, reference, point, rotation):
     """MuJoCo world [moment, force] about reference -> local [force, moment]."""
     force = wrench[3:]
-    moment = wrench[:3] + np.cross(reference-point, force)
+    moment = wrench[:3] + cross(reference-point, force)
     return np.concatenate((rotation.T@force, rotation.T@moment))
 
 
@@ -37,6 +42,8 @@ class FEARecording:
         self.start_time = float(data.time)
         self.active = True
         self.reason = ''
+        # Optional phase names (e.g. sweep, hold) to capture; None records every step.
+        self.phases = None
         self.rows = []
         self.last_export = None
         self.selected_samples = set()
@@ -80,7 +87,7 @@ class FEARecording:
             self.events.append(dict(time_s=float(time)-self.start_time, name=name, value=value))
 
     def capture(self, m, d, row, phase):
-        if not self.active:
+        if not self.active or (self.phases and phase.rsplit(': ', 1)[-1] not in self.phases):
             return
         mujoco.mj_rnePostConstraint(m, d)
         rotations = d.xmat.reshape((-1, 3, 3))
