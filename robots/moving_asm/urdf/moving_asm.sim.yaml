@@ -7,7 +7,7 @@
 model_type: urdf
 name: CAD arm / RobStride / 7 links
 urdf:
-  path: /Users/bradylin/Documents/Projects/Club & Lab/openarm-dynamics-sim/robots/moving_asm/urdf/moving_asm.urdf
+  path: moving_asm.urdf
   package_roots: []
   tip_link: part_7
   tip_offset_m:
