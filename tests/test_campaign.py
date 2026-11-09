@@ -6,12 +6,13 @@ import numpy as np
 import pytest
 import yaml
 
-from arm_design.campaign import Peaks, campaign, run_sweep
+from arm_design.campaign import PROGRESS, PROGRESS_EVERY, Peaks, campaign, run_sweep
 from arm_design.collision import CollisionChecker
 from arm_design.config import ROOT, load_config
 from arm_design.experiment import Experiment
 from arm_design.fea import METRICS
 from arm_design.model import build_arm
+from arm_design.watch import read, rise_pct
 
 
 def quick_config():
@@ -84,6 +85,16 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
     meta = json.loads((folder/'metadata.json').read_text())
     assert meta['campaign']['sweeps'] == len(sweeps) and meta['samples'] == len(cases)
     assert yaml_unchanged(c)
+    # Live progress: one row per PROGRESS_EVERY counted sweeps plus a final one, ending at the exported peaks.
+    head, values, stages = read(folder/'convergence.csv')
+    counted = meta['campaign']['counted']
+    assert list(values[:, 0]) == [*range(PROGRESS_EVERY, counted+1, PROGRESS_EVERY)][:len(values)-1] + [counted]
+    assert stages[-1] == 'refine' and (folder.parent/PROGRESS).read_bytes() == (folder/'convergence.csv').read_bytes()
+    last = dict(zip([h for k, h in enumerate(head) if k != 3], values[-1]))
+    for i, f in enumerate(rec.interfaces):
+        if f['sign'] == 1:
+            assert last[f['label']+'|force_N'] == pytest.approx(rec.maximum[i, METRICS.index('force_N')])
+    assert np.all(rise_pct(values[:, 3:]) >= 0)
 
 
 def yaml_unchanged(c):

@@ -25,6 +25,9 @@ _checker = None
 CHECK_EVERY = 5
 # Perturbations tried per refinement iteration before giving up on a collision-free path.
 PATH_TRIES = 50
+# Counted sweeps between rows of the live convergence file (arm-sim watch plots it).
+PROGRESS_EVERY = 10
+PROGRESS = 'campaign-progress.csv'
 
 
 def _init(cfg, include_failed=False, max_overlap_mm=0.):
@@ -215,8 +218,17 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
     sweeps, best = [], {}
     targets = [(i, j) for i, f in enumerate(interfaces) if f['sign'] == 1 for j in OBJECTIVES]
     started = time.monotonic()
+    Path(out).mkdir(parents=True, exist_ok=True)
+    progress = (Path(out)/PROGRESS).open('w', newline='')
+    progress_csv, counted = csv.writer(progress), 0
+    progress_csv.writerow(['counted', 'sweeps', 'elapsed_s', 'stage', *(f'{interfaces[i]["label"]}|{METRICS[j]}' for i, j in targets)])
+
+    def snapshot(stage):
+        progress_csv.writerow([counted, len(sweeps), round(time.monotonic()-started, 1), stage, *(peaks.maximum[t] for t in targets)])
+        progress.flush()
 
     def collect(results, stage):
+        nonlocal counted
         for result in results:
             sweep_id = len(sweeps)
             peaks.add(sweep_id, result)
@@ -226,6 +238,9 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
                     best[target] = (value, sweep_id)
             sweeps.append({k: v for k, v in result.items()
                            if k not in ('minimum', 'maximum', 'min_index', 'max_index', 'extrema')} | dict(stage=stage))
+            counted += result['counted']
+            if result['counted'] and counted % PROGRESS_EVERY == 0:
+                snapshot(stage)
         log(f'{len(sweeps)} sweeps, {time.monotonic()-started:.0f} s', flush=True)
 
     def refine_jobs():
@@ -236,20 +251,26 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
                                limits_deg=limits, duration_range=(lo_d, hi_d), seed=[seed, n]))
         return result
 
-    if workers == 1:
-        _init(cfg, include_failed, max_overlap_mm)
-        for k, job in enumerate(jobs):
-            collect(_sweep(job), 'saved' if k < 2 else 'random')
-        if iterations:
-            collect([r for job in refine_jobs() for r in _refine(job)], 'refine')
-    else:
-        context = multiprocessing.get_context('spawn')
-        with ProcessPoolExecutor(workers, context, _init, (cfg, include_failed, max_overlap_mm)) as pool:
-            for k, results in enumerate(pool.map(_sweep, jobs, chunksize=1)):
-                collect(results, 'saved' if k < 2 else 'random')
+    try:
+        if workers == 1:
+            _init(cfg, include_failed, max_overlap_mm)
+            for k, job in enumerate(jobs):
+                collect(_sweep(job), 'saved' if k < 2 else 'random')
             if iterations:
-                for results in pool.map(_refine, refine_jobs()):
-                    collect(results, 'refine')
+                for job in refine_jobs():
+                    collect(_refine(job), 'refine')
+        else:
+            context = multiprocessing.get_context('spawn')
+            with ProcessPoolExecutor(workers, context, _init, (cfg, include_failed, max_overlap_mm)) as pool:
+                for k, results in enumerate(pool.map(_sweep, jobs, chunksize=1)):
+                    collect(results, 'saved' if k < 2 else 'random')
+                if iterations:
+                    for results in pool.map(_refine, refine_jobs()):
+                        collect(results, 'refine')
+        if counted % PROGRESS_EVERY:
+            snapshot(sweeps[-1]['stage'])
+    finally:
+        progress.close()
     if not any(s['counted'] for s in sweeps):
         raise RuntimeError('No sweep tracked within tolerance; lengthen --min-duration or pass --include-failed.')
     settings = dict(samples=samples, refine_iterations=iterations, duration_range_s=[lo_d, hi_d],
@@ -271,6 +292,7 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
             writer.writerow([i, s['stage'], s['duration_s'], s['completed'], s['tracking_ok'],
                              s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], s['collision'], *s['a_deg'], *s['b_deg']])
     (folder/'campaign.json').write_text(json.dumps(settings, indent=2))
+    (folder/'convergence.csv').write_bytes((Path(out)/PROGRESS).read_bytes())
     return folder, rec
 
 

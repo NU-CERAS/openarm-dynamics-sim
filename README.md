@@ -286,6 +286,14 @@ settings. These are the largest loads the search **found**, not a proven
 global maximum. Run more samples or iterations until the peaks stop increasing.
 Jogging and Go to A/B moves are not searched.
 
+To see whether the peaks are tapering off, add `--live`. A window plots every
+interface's running peak force and moment after each 10 counted sweeps, with the
+largest percent rise since the previous point below and a dotted line where
+refinement starts. The data goes to `<out>/campaign-progress.csv` while the
+campaign runs and is copied into the export as `convergence.csv`.
+`.venv/bin/arm-sim watch [--results <csv or folder>]` opens the same plot for a
+running or finished campaign (default: the newest one under `--out`).
+
 To watch the sweeps behind the peaks, open the viewer for the same robot
 (`./scripts/start.sh`, with `--urdf` if the campaign used it) and expand
 **Campaign replay**. **Load latest campaign** finds the newest campaign for this
