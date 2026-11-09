@@ -5,7 +5,7 @@ from .config import DEFAULT_CONFIG, ROOT, load_config, validate
 
 def main():
     p=argparse.ArgumentParser(description='MuJoCo joint jogging and timed A/B sweeps')
-    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds','fea-cases'])
+    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds','fea-cases','watch'])
     source=p.add_mutually_exclusive_group()
     source.add_argument('--config',type=Path,default=DEFAULT_CONFIG)
     source.add_argument('--urdf',type=Path,help='Import a fixed-base rotary robot; creates <robot>.sim.yaml beside the URDF')
@@ -27,7 +27,8 @@ def main():
     p.add_argument('--min-lever-m',type=float,default=.05,help='Bounds: nearest blocking point to a joint axis (default 0.05 m)')
     p.add_argument('--contacts',choices=['tip','all'],default='tip',help='Bounds: block only the tool tip (default) or also every moving body origin')
     p.add_argument('--max-contact-force-n',type=float,help='Bounds: design limit on the blocking force (default: motor-limited only)')
-    p.add_argument('--results',type=Path,help='fea-cases: a campaign fea-* folder or a bounds-* folder')
+    p.add_argument('--live',action='store_true',help='Campaign: open a live plot of peak loads every 10 counted sweeps (same as arm-sim watch)')
+    p.add_argument('--results',type=Path,help='fea-cases: a campaign fea-* folder or a bounds-* folder. watch: a progress/convergence CSV or a folder to search (default --out)')
     p.add_argument('--part',help='fea-cases: the body to set up for FEA, e.g. part_3')
     p.add_argument('--fixed',help='fea-cases: connection to constrain (default: the proximal one, toward the base)')
     p.add_argument('--all-extremes',action='store_true',help='fea-cases: include every Fx..Mz extreme, not just peak force/moment magnitudes')
@@ -44,6 +45,15 @@ def main():
                 print(f'Saved {folder/f"fea_setup_{args.part}.csv"}\n')
         except (ValueError,OSError,KeyError) as exc:
             p.error(str(exc))
+        return
+    if args.command=='watch':
+        from .watch import find, watch
+        try:
+            path=find(args.results or args.out)
+        except ValueError as exc:
+            p.error(str(exc))
+        print(f'Watching {path}',flush=True)
+        watch(path)
         return
     if args.package_root and args.urdf is None:
         p.error('--package-root requires --urdf; for saved configs edit urdf.package_roots in YAML.')
@@ -67,8 +77,12 @@ def main():
     if args.command=='campaign':
         if args.duration is not None:
             p.error('For campaigns, use --min-duration and --max-duration.')
-        from .campaign import campaign
+        from .campaign import campaign, PROGRESS
         from .fea import METRICS
+        if args.live:
+            import subprocess, sys
+            (args.out/PROGRESS).unlink(missing_ok=True)
+            subprocess.Popen([sys.executable,'-m','arm_design.cli','watch','--results',str(args.out/PROGRESS)])
         try:
             folder,rec=campaign(c,args.out,200 if args.samples is None else args.samples,20 if args.iterations is None else args.iterations,(args.min_duration,args.max_duration),args.workers,args.seed,args.include_failed,
                                 None if args.allow_self_collision else args.max_overlap_mm)

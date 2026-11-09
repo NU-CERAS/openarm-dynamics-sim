@@ -18,7 +18,8 @@ MuJoCo-based dynamics sim for a 7-DOF OpenArm-style arm with RobStride actuators
 # Headless (no window)
 .venv/bin/arm-sim sweep [--urdf ...] [--direction b-to-a] [--duration S] --out results/x   # exits 2 if tracking fails
 .venv/bin/arm-sim export [--urdf ...] --out results/x   # writes generated MJCF arm.xml
-.venv/bin/arm-sim campaign [--urdf ...] --samples N --iterations K [--workers W] [--include-failed]   # worst-case loads over many sweeps
+.venv/bin/arm-sim campaign [--urdf ...] --samples N --iterations K [--workers W] [--include-failed] [--live]   # worst-case loads over many sweeps; --live plots peaks every 10 counted sweeps
+.venv/bin/arm-sim watch [--results <campaign-progress.csv, convergence.csv or folder>]   # live/finished campaign convergence plot
 .venv/bin/arm-sim bounds [--urdf ...] --max-contact-force-n F   # static gravity + blocked-tip bounding cases (seconds)
 .venv/bin/arm-sim fea-cases --results <fea-* or bounds-*> --part part_3   # per-part FEA setup: fixed face, remote loads, body loads
 ```
