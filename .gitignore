@@ -8,4 +8,5 @@ results/
 .streamlit/secrets.toml
 robots/**/*.sim.yaml
 !robots/moving_asm/urdf/moving_asm.sim.yaml
+!robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml
 

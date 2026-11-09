@@ -79,3 +79,15 @@ from 0.000238549 kg to the catalog 0.621 kg, using the same proportional inertia
 scaling and retaining the CAD COM. Other CAD link properties are retained. The
 compiled replacement arm totals 7.446340 kg, including the real seventh link.
 
+`robots/right_arm_assembly/urdf/right_arm_assembly.urdf` is a second Onshape export:
+the same joint chain as `moving_asm`, rotated 90° about Z, with a `base`/`screwon`/`drumstick`
+tool instead of `part_7`. The export had no `<limit>` elements; effort (RobStride peak) and
+velocity (no-load speed) were added per motor (03/03/06/06/00/00/00, identified by each
+joint's parent housing). Hardware limits were mapped from `moving_asm`: J2 −20..200°,
+J4 ±135°, J6 −90..50°, J7 ±70° (J7's axis is reversed in this export; the range is
+symmetric, and with this tool it is collision-free, unlike `part_7`'s −56°). RS00/RS06
+housing masses and inertias received the same catalog correction as above. The tool links
+had near-zero export masses (no material assigned); the user's measured 0.151 lb (`base`),
+0.065 lb (`screwon`) and 0.043 lb (`drumstick`) replace them, with CAD COM retained and
+inertia scaled by the mass ratio. The compiled arm totals 5.4116 kg. Its `.sim.yaml` copies `moving_asm`'s drive data, gains and floor.
+
