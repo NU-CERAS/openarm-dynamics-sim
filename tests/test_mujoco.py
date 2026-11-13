@@ -4,7 +4,7 @@ import csv
 import numpy as np
 import mujoco
 import pytest
-from arm_design.config import ROOT, load_config, validate, save_sweep
+from arm_design.config import ROOT, load_config, validate, save_controls
 from arm_design.model import build_arm, structure, rpy
 from arm_design.simulation import run_headless, control, step, smooth_move
 from arm_design.reporting import summary, save_result
@@ -118,7 +118,7 @@ def test_save_and_export_are_replayable(tmp_path):
     import yaml
     c=load_config();p=tmp_path/'arm.yaml';p.write_text(yaml.safe_dump(c))
     c['sweep']['duration_s']=.5
-    save_sweep(p,c['sweep']);loaded=load_config(p)
+    save_controls(p,c['sweep']);loaded=load_config(p)
     assert loaded['sweep']['duration_s']==.5
     a,r=run_headless(loaded);folder=save_result(a,r,tmp_path)
     assert load_config(folder/'config.yaml')==loaded

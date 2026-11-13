@@ -12,7 +12,7 @@ import mujoco
 import numpy as np
 import yaml
 
-from .fea import FEARecording, METRICS, jsonable
+from .fea import FEARecording, jsonable
 
 
 def atomic_json(path, value):

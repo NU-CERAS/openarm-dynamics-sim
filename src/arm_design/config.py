@@ -147,10 +147,6 @@ def header(path, default=''):
     return ''.join(lines)
 
 
-def save_sweep(path, sweep):
-    save_controls(path, sweep)
-
-
 def merge_geometry(c, geometry):
     if c.get('model_type') == 'urdf':
         raise ValueError('Edit geometry and inertial properties in the source URDF, then Reload YAML.')

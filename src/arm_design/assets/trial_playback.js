@@ -5,16 +5,7 @@
     let dispose = () => {};
     let libraries;
     const models = new Map();
-    function element(tag, text, className) {
-        const node = document.createElement(tag);
-        if (text !== undefined) node.textContent = text;
-        if (className) node.className = className;
-        return node;
-    }
-    function unpack(encoded, Type) {
-        const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
-        return new Type(bytes.buffer);
-    }
+    const {element, geometry: makeGeometry} = window.armPreviewUtils;
     function matrix(THREE, pose) {
         const p = pose;
         return new THREE.Matrix4().set(p[3], p[4], p[5], p[0], p[6], p[7], p[8], p[1],
@@ -98,29 +89,7 @@
             const geometrySet = new Set();
             const objects = [];
             for (const geom of model.geoms) {
-                let geometry;
-                const size = geom.size;
-                if (geom.kind === 7) {
-                    if (!geometryCache.has(geom.mesh)) {
-                        const source = model.meshes[geom.mesh];
-                        geometry = new THREE.BufferGeometry();
-                        geometry.setAttribute('position', new THREE.BufferAttribute(unpack(source.vertices, Float32Array), 3));
-                        geometry.setIndex(new THREE.BufferAttribute(unpack(source.faces, Uint32Array), 1));
-                        geometry.computeVertexNormals();
-                        geometryCache.set(geom.mesh, geometry);
-                    }
-                    geometry = geometryCache.get(geom.mesh);
-                } else if (geom.kind === 6) geometry = new THREE.BoxGeometry(2*size[0], 2*size[1], 2*size[2]);
-                else if (geom.kind === 5) {
-                    geometry = new THREE.CylinderGeometry(size[0], size[0], 2*size[1], 24);
-                    geometry.rotateX(Math.PI/2);
-                } else if (geom.kind === 3) {
-                    geometry = new THREE.CapsuleGeometry(size[0], 2*size[1], 8, 16);
-                    geometry.rotateX(Math.PI/2);
-                } else {
-                    geometry = new THREE.SphereGeometry(1, 24, 16);
-                    geometry.scale(size[0], geom.kind === 4 ? size[1] : size[0], geom.kind === 4 ? size[2] : size[0]);
-                }
+                const geometry = makeGeometry(THREE, model, geom, geometryCache, 24, 8, 16);
                 geometry.computeBoundingBox(); geometrySet.add(geometry);
                 const object = new THREE.Mesh(geometry, data.members.includes(geom.body) ? highlight : material);
                 object.matrixAutoUpdate = false; scene.add(object); objects.push(object);

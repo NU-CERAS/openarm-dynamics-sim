@@ -64,6 +64,7 @@ def test_browser_kinematics_matches_mujoco_with_payload(tmp_path,config):
 const input=JSON.parse(fs.readFileSync(0,'utf8'));
 const THREE=await import(input.three);
 globalThis.window={};globalThis.document={currentScript:{src:input.source},addEventListener:()=>{}};
+vm.runInThisContext(fs.readFileSync(new URL('00_preview_utils.js',input.source),'utf8'));
 vm.runInThisContext(fs.readFileSync(new URL(input.source),'utf8'));
 const robot=window.armLiveKinematics.build(THREE,input.model);
 console.log(JSON.stringify(input.q.map(q=>{robot.apply(q);return robot.objects.map(o=>[...o.matrixWorld.elements]);})));robot.dispose();

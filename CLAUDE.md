@@ -28,7 +28,7 @@ MuJoCo-based dynamics sim for a 7-DOF OpenArm-style arm with RobStride actuators
 
 ## Architecture
 
-**Config is the single source of truth.** Everything is driven by a YAML dict (`configs/arm.yaml` for the built-in arm, or `<robot>.sim.yaml` for imports). `config.validate` checks it; `config.save_controls`/`save_sweep` write poses, gains and geometry back to it from the UI. Joint angles in YAML are degrees; units are in field names (`_mm`, `_kg`, `_deg`, `_nm`).
+**Config is the single source of truth.** Everything is driven by a YAML dict (`configs/arm.yaml` for the built-in arm, or `<robot>.sim.yaml` for imports). `config.validate` checks it; `config.save_controls` writes poses, gains and geometry back to it from the UI. Joint angles in YAML are degrees; units are in field names (`_mm`, `_kg`, `_deg`, `_nm`).
 
 **Two model builders, one `Arm` dataclass.** `model.build_arm(c)` dispatches on `c['model_type']`:
 - Default: generates MJCF from scratch — analytical hollow-tube + bracket inertia (`structure`), motor housings as cylinders on the parent side of each joint, tool/payload boxes on J7. Axes and origin rotations come from the pinned OpenArm v1 URDF in `references/`.

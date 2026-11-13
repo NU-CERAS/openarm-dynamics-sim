@@ -3,15 +3,7 @@
     const assetBase = new URL('.', document.currentScript.src);
     const models = new Map();
     let libraries, current = null, generation = 0;
-    const el = (tag, text, cls) => {
-        const n = document.createElement(tag);
-        if (text !== undefined) n.textContent = text;
-        if (cls) n.className = cls;
-        return n;
-    };
-    function unpack(encoded, Type) {
-        return new Type(Uint8Array.from(atob(encoded), c => c.charCodeAt(0)).buffer);
-    }
+    const {element: el, geometry: makeGeometry} = window.armPreviewUtils;
     function quaternion(THREE, q) { return new THREE.Quaternion(q[1], q[2], q[3], q[0]); }
     function build(THREE, model) {
         const root = new THREE.Group(), bodies = [], joints = [], objects = [];
@@ -31,26 +23,7 @@
             bodies.push(attachment);
         });
         for (const geom of model.geoms) {
-            let geometry;
-            const size = geom.size;
-            if (geom.kind === 7) {
-                if (!meshes.has(geom.mesh)) {
-                    const source = model.meshes[geom.mesh];
-                    geometry = new THREE.BufferGeometry();
-                    geometry.setAttribute('position',new THREE.BufferAttribute(unpack(source.vertices,Float32Array),3));
-                    geometry.setIndex(new THREE.BufferAttribute(unpack(source.faces,Uint32Array),1));
-                    geometry.computeVertexNormals(); meshes.set(geom.mesh,geometry);
-                }
-                geometry = meshes.get(geom.mesh);
-            } else if (geom.kind === 6) geometry = new THREE.BoxGeometry(2*size[0],2*size[1],2*size[2]);
-            else if (geom.kind === 5) {
-                geometry = new THREE.CylinderGeometry(size[0],size[0],2*size[1],20); geometry.rotateX(Math.PI/2);
-            } else if (geom.kind === 3) {
-                geometry = new THREE.CapsuleGeometry(size[0],2*size[1],6,12); geometry.rotateX(Math.PI/2);
-            } else {
-                geometry = new THREE.SphereGeometry(1,20,12);
-                geometry.scale(size[0],geom.kind === 4 ? size[1] : size[0],geom.kind === 4 ? size[2] : size[0]);
-            }
+            const geometry = makeGeometry(THREE, model, geom, meshes, 20, 6, 12);
             geometries.add(geometry);
             const rgba = geom.rgba, key = rgba.join(',');
             if (!materials.has(key)) materials.set(key,new THREE.MeshStandardMaterial({

@@ -85,6 +85,9 @@ def test_dashboard_selection_uses_trial_id_and_survives_live_refresh(recording):
     assert client.get('/replay-model',query_string={'run':str(path.parent)}).status_code == 404
     assert client.get('/assets/trial_playback.js').status_code == 200
     page = client.get('/').text
+    assert page.index('/assets/00_preview_utils.js') < page.index('/assets/live_preview.js')
+    assert page.index('/assets/00_preview_utils.js') < page.index('/assets/trial_playback.js')
+    assert client.get('/assets/00_preview_utils.js').status_code == 200
     assert 'src="/assets/vendor/' not in page  # ES modules are imported only on play.
 
 
