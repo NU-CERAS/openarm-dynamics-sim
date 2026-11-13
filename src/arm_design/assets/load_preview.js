@@ -24,7 +24,7 @@
         weight.textContent = data.weight + ' · logarithmic bins';
         const image = document.createElement('img');
         image.src = data.image;
-        image.alt = 'Signed distribution with zero and the hovered extreme marked';
+        image.alt = data.kind === 'percentile' ? 'Signed distribution with percentile threshold and shaded outer tail' : 'Signed distribution with zero and the hovered extreme marked';
         const summary = document.createElement('div');
         summary.className = 'preview-statistics';
         summary.textContent = data.summary;
@@ -77,7 +77,7 @@
         set('extreme', {value: data.side});
         set('bin-filter', {data: null});
         set('histogram-focus', {data: {path: data.path, part: data.part, interface: data.interface,
-            metric: data.metric, side: data.side, value: data.value}});
+            metric: data.metric, side: data.side, value: data.value, kind: data.kind, q: data.q}});
         const section = document.getElementById('histogram-section');
         if (section) section.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start'});
     });

@@ -12,20 +12,27 @@ from threading import RLock
 import numpy as np
 import plotly.graph_objects as go
 from dash.exceptions import PreventUpdate
-from dash import Dash, Input, Output, State, ctx, dcc, html, dash_table, no_update
+from dash import Dash, Input, Output, State, MATCH, ALL, ctx, dcc, html, dash_table, no_update
 from flask import request, jsonify, abort
 
 from .analysis import trials, edges, metrics
 from .config import ROOT
 from .fea import METRICS
 from .fea_view import mesh_figure
-from .load_histograms import trial_extreme, histogram_counts, percentile_text, preview_svg, split_histogram
+from .load_histograms import trial_extreme, histogram_counts, percentile_text, preview_svg, split_histogram, tail_percentile
 from .trial_playback import playback, model_geometry
 from .trial_recording import trace_path, recording_status, start_recording
 from .dashboard_jobs import prepare, save_request, job_state, request_stop
 from .payload import default_payload_offset
 
 COLORS = ['#25c9a3', '#ffb45b', '#65a9ff', '#ed81c5', '#b2a0ff', '#ef7176', '#9dc66b', '#79d5e8']
+TAIL_DEFAULT = .995
+
+TRIAL_COMPONENT_COLUMNS = [
+    dict(id=f'{metric}_{side}', name=f'{metric.split("_")[0]} {label} ({metric.split("_")[1]})',
+         type='numeric', format={'specifier':'+.5g'})
+    for metric in METRICS[:6] for side, label in [('minimum', 'min'), ('maximum', 'max')]
+]
 
 RUN_FIELDS = ['model','run-name','payload-mass','free-count','restrained-count','motion-mode',
     'min-duration','max-duration','pose-count','duration','ramp','payload-x','payload-y','payload-z',
@@ -209,6 +216,26 @@ def scoped_interface(refs, part, interface):
     return interface if interface in indices else (indices[0] if indices else None)
 
 
+def tail_readout(q, data):
+    result = tail_percentile(data['counts'], data['side'], q, data['minimum'], data['maximum'])
+    sign = 'negative' if data['side'] == 'minimum' else 'positive / zero'
+    if result is None:
+        return html.Div(f'No {sign} samples', className='tail-empty')
+    value, interval = result['value'], result['interval']
+    summary = (f"P{100*q:g} of {sign} samples · bin {interval[0]:+.5g} to {interval[1]:+.5g}. "
+               f"{'Exact observed value.' if result['exact'] else 'Approximate threshold interpolated within the bin.'} "
+               f"{100*result['share']:.3g}% of the distribution is on this side. "
+               f"Target tail: {100*(1-q):g}% of this side; ≈{100*result['tail_fraction']:.3g}% of all samples. "
+               'Ties may change the fraction strictly beyond the threshold.')
+    preview = {k:v for k,v in data.items() if k not in ('counts','minimum','maximum')}
+    preview.update(kind='percentile', q=q, value=value, summary=summary,
+                   image=preview_svg(data['counts'],value,data['side'] if result['tail_fraction'] else None))
+    return html.Div([
+        html.Button(f"{'≈ ' if not result['exact'] else ''}{value:+.5g} · P{100*q:g}",className='load-value tail-value',type='button',
+                    title=summary, **{'data-load-preview':json.dumps(preview),
+                    'aria-label':f"{data['metric']} {sign} percentile {100*q:g}: {value:+.5g}. Open histogram"})])
+
+
 def fea_limits(path, part, stage, accepted, weighting="time"):
     stats, rows = aggregate(path, stage, accepted)
     mates = connection_rows(run_info(path).get('interfaces', []), part)
@@ -222,7 +249,7 @@ def fea_limits(path, part, stage, accepted, weighting="time"):
     valid = [r for r in rows if 'minimum' in r and 'maximum' in r]
     for j, metric in enumerate(METRICS[:6]):
         low, high = stats['minimum'][i,j], stats['maximum'][i,j]
-        values = []
+        values, observed = [], []
         for side, value in [('minimum',low),('maximum',high)]:
             counts = histogram_counts(stats,rows,i,j,weighting,side)
             weight_label = ('Simulated time · % of physics samples' if weighting == 'time' else f'One {side} per trial · % of trials')
@@ -230,9 +257,23 @@ def fea_limits(path, part, stage, accepted, weighting="time"):
                 summary=percentile_text(counts),weight=weight_label,
                 scope='Test coverage, not real-world occurrence frequency.',
                 path=str(path),part=part,interface=i,metric=metric,side=side,value=float(value))
-            values.append(html.Td(html.Button(f'{value:+.5g}',className='load-value',type='button',
-                **{'data-load-preview':json.dumps(preview),'aria-label':f'{metric} {side} {value:+.5g}; preview distribution or click to open histogram'})))
-        cells.append(html.Tr([html.Th(metric.replace('_',' ')),*values]))
+            data = dict(preview, counts=counts.tolist(), minimum=float(low), maximum=float(high))
+            ident = dict(metric=metric, side=side)
+            values.append(html.Div([
+                dcc.Store(id=dict(type='tail-data',**ident),data=data),
+                html.Div(tail_readout(TAIL_DEFAULT,data),id=dict(type='tail-readout',**ident),className='tail-readout'),
+                html.Div(dcc.Slider(id=dict(type='tail-slider',**ident), min=.5,max=1,step=.001,value=TAIL_DEFAULT,
+                    marks={.5:'50%',1:'100%'},updatemode='drag',allow_direct_input=False,
+                    reverse=side=='minimum',
+                    disabled=tail_percentile(counts,side,TAIL_DEFAULT,low,high) is None,
+                    persistence=f'{path}|{part}|default-99.5',persistence_type='session'),className='tail-slider',
+                    role='group', **{'aria-label':f'{metric} {side} tail percentile'})
+            ],className=f'tail-controls tail-{side}'))
+            observed.append(html.Td(html.Button(f'{value:+.5g}',
+                    className='load-value tail-observed',type='button',
+                    **{'data-load-preview':json.dumps(preview),'aria-label':f'{metric} observed {side} {value:+.5g}; preview distribution or click to open histogram'}),className='tail-extreme'))
+        cells.append(html.Tr([html.Th(metric.replace('_',' ')), observed[0],
+                              html.Td(values[0],className='tail-cell'),html.Td(values[1],className='tail-cell'),observed[1]]))
         for side, field, select in [('minimum','minimum',min),('maximum','maximum',max)]:
             if not valid:
                 continue
@@ -246,8 +287,11 @@ def fea_limits(path, part, stage, accepted, weighting="time"):
     if len(mates)==1:
         note = (f'Only one mounting connection: {support}. These limits are support reactions, not loads to apply to a fixed face. '
                 'External/contact and body loads are available in the recorded FEA exports.')
-    table = html.Div([html.P(role,className='fea-mate'),
-        html.Table([html.Thead(html.Tr([html.Th(x) for x in ['Component','Minimum','Maximum']])),html.Tbody(cells)]),
+    table = html.Div([html.Div([html.P(role,className='fea-mate'),
+        html.Button('Reset all to 99.5%',id='reset-tail-percentiles',n_clicks=0,type='button')],className='fea-table-toolbar'),
+        html.Table([html.Colgroup([html.Col(style={'width':w}) for w in ['9%','12%','33.5%','33.5%','12%']]),
+            html.Thead(html.Tr([html.Th(x) for x in ['Component','Observed min','← Negative tail','Positive / zero tail →','Observed max']])),html.Tbody(cells)]),
+        html.P('Slide outward to include more loads: left for negative, right for positive. Hover for tail statistics; click for the histogram. Percentiles are binned estimates; observed min/max are exact. Test coverage is not an operating duty cycle.',className='note tail-explanation'),
         html.P(note,className='note')],className='link-summary')
     return table, options, candidates
 
@@ -381,7 +425,12 @@ def figures(path, other, interface, metric, stage, accepted, weighting, part=Non
         hist.update_layout(legend=dict(orientation='h', x=0, y=1.12, font_size=10), margin_t=65)
     selected = focus if focus and focus.get('path') == str(path) and focus.get('part') == part and focus.get('metric') == metric and focus.get('interface') == i else None
     if selected and stats['count']:
-        selected = dict(selected,value=float(stats[selected['side']][i,j]))
+        if selected.get('kind') == 'percentile':
+            counts = histogram_counts(stats,rows,i,j,weighting,selected['side'])
+            threshold = tail_percentile(counts,selected['side'],selected['q'],stats['minimum'][i,j],stats['maximum'][i,j])
+            selected = dict(selected,value=threshold['value']) if threshold else None
+        else:
+            selected = dict(selected,value=float(stats[selected['side']][i,j]))
     hist = split_histogram(hist,metric,selected)
     links.update_xaxes(tickangle=-45)
     return [hist, convergence, links], rows, description
@@ -521,7 +570,7 @@ def create_app(root):
                 html.Label('SELECT A LINK'), dcc.RadioItems(id='part', className='link-picker'),
                 html.H2(id='link-title'),
                 html.Div([html.Div(id='link-summary'),
-                    html.Div(dcc.Graph(id='pose',figure=blank('Selected link mesh'),style={'height':'340px'},config={'responsive':True}),className='fea-view')],className='fea-overview'),
+                    html.Div(dcc.Graph(id='pose',figure=blank('Selected link mesh'),responsive=True,style={'height':'100%'},config={'responsive':True}),className='fea-view')],className='fea-overview'),
                 html.P('Signed component envelopes: left of zero is negative; right is positive, in this link’s local XYZ frame. Independent extrema are not one simultaneous FEA case.', className='note'),
                 html.Div([dcc.Graph(id='signed-force', figure=blank('Signed forces'), style={'height':'260px'}, config={'responsive':True}),
                           dcc.Graph(id='signed-moment', figure=blank('Signed moments'), style={'height':'260px'}, config={'responsive':True})], className='grid'),
@@ -537,8 +586,10 @@ def create_app(root):
                 dcc.Graph(id='histogram', figure=blank('Loading…'), responsive='auto', style={'height':'320px', 'minHeight':0}, config={'responsive':True}),
                 html.P('Signed components are split into negative and positive/zero panels. Percentages use the full distribution across both panels; bin widths are logarithmic. Click a bin to inspect contributing trials; press Esc to clear the filter.',className='note'),
                 dcc.Graph(id='convergence', figure=blank('Loading…'), responsive='auto', style={'height':'260px', 'minHeight':0}, config={'responsive':True}),
-                html.H2('Trial explorer'), html.P('Click a histogram bin to filter contributing trials. Link peaks are the largest connection magnitudes, not summed loads. Select a row to inspect its recorded history.', className='note'),
-                dash_table.DataTable(id='trials', columns=[{'name':k,'id':k} for k in ['id','stage','counted','partial','max_tracking_error_deg','duration_s','samples','peak_force_N','peak_moment_Nm','torque_utilization_pct','reason']],
+                html.H2('Trial explorer'), html.P('Sort any component by clicking its column heading: min ascending finds the most negative loads; max descending finds the most positive. Components use the histogram’s connection in the selected link’s local XYZ frame. Link magnitude peaks cover all mates on this link. Click a histogram bin to filter trials; select a row for history and playback.', className='note'),
+                dash_table.DataTable(id='trials', columns=[{'name':'Trial','id':'id','type':'numeric'},
+                    *TRIAL_COMPONENT_COLUMNS,
+                    *[{'name':k,'id':k,'type':'text' if k == 'reason' else 'numeric'} for k in ['max_tracking_error_deg','duration_s','samples','peak_force_N','peak_moment_Nm','torque_utilization_pct','reason']]],
                     page_size=8, row_selectable='single', selected_rows=[], sort_action='native',
                     style_table={'overflowX':'auto'}, style_header={'backgroundColor':'#1c3045','color':'#dde8f3'},
                     style_cell={'backgroundColor':'#101b29','color':'#cbd8e5','border':'1px solid #26394a','textAlign':'left','maxWidth':'360px','whiteSpace':'normal'}),
@@ -849,6 +900,20 @@ def create_app(root):
         completed = s.get('trials',0)
         return completed,max(1,planned,completed),f'{completed:,} / {planned:,} attempted trials'
 
+    @app.callback(Output({'type':'tail-readout','metric':MATCH,'side':MATCH},'children'),
+                  Input({'type':'tail-slider','metric':MATCH,'side':MATCH},'value'),
+                  Input({'type':'tail-data','metric':MATCH,'side':MATCH},'data'))
+    def update_tail(q, data):
+        return tail_readout(float(q if q is not None else TAIL_DEFAULT),data)
+
+    @app.callback(Output({'type':'tail-slider','metric':ALL,'side':ALL},'value'),
+                  Input('reset-tail-percentiles','n_clicks'),
+                  State({'type':'tail-slider','metric':ALL,'side':ALL},'id'),prevent_initial_call=True)
+    def reset_tails(clicks, sliders):
+        if not clicks:
+            raise PreventUpdate
+        return [TAIL_DEFAULT for _ in sliders]
+
     @app.callback(Output('link-summary','children'), Input('chart-version','data'),
                   State('run','value'), State('part','value'), State('stage','value'), State('accepted','value'), State('weight','value'))
     def fea_selection(version, path, part, stage, accepted, weight='time'):
@@ -893,8 +958,13 @@ def create_app(root):
         indices = [i for i, _ in connection_rows(run_info(path).get('interfaces', []), part)]
         rows = [dict(r, torque_utilization_pct=round(100*max(r.get('peak_torque_fraction', [0])), 1) if 'peak_torque_fraction' in r else None, **{f'peak_{metric}': round(max(r['maximum'][i][METRICS.index(metric)] for i in indices), 3)
                          for metric in ('force_N', 'moment_Nm')}) if indices and 'maximum' in r else r for r in rows]
+        if interface is not None:
+            rows = [dict(r, **{f'{metric_name}_{side}': float(r[side][interface][j]) if side in r else None
+                              for j, metric_name in enumerate(METRICS[:6])
+                              for side in ('minimum', 'maximum')}) for r in rows]
         # Large per-connection extrema stay on disk; don't resend them in every table row.
-        rows = [{k:v for k,v in r.items() if k in ('id','stage','counted','partial','max_tracking_error_deg','final_speed_deg_s','start_tracking_error_deg','diagnostics','measured_duration_s','acceptance_policy','duration_s','samples','reason','peak_force_N','peak_moment_Nm','torque_utilization_pct','pair_id','direction','search_step','search_role','full_history','max_clamp_position_error_m','max_clamp_angle_error_rad')} for r in rows]
+        component_fields = {column['id'] for column in TRIAL_COMPONENT_COLUMNS}
+        rows = [{k:v for k,v in r.items() if k in ('id','stage','counted','partial','max_tracking_error_deg','final_speed_deg_s','start_tracking_error_deg','diagnostics','measured_duration_s','acceptance_policy','duration_s','samples','reason','peak_force_N','peak_moment_Nm','torque_utilization_pct','pair_id','direction','search_step','search_role','full_history','max_clamp_position_error_m','max_clamp_angle_error_rad') or k in component_fields} for r in rows]
         selected = selection if ctx.triggered_id == 'refresh' and selection and selection[0] < len(rows) else []
         return rows, no_update if ctx.triggered_id == 'refresh' else selected, version
 

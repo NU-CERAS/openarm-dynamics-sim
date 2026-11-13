@@ -51,3 +51,50 @@ def test_trial_previews_use_each_columns_statistic_and_binned_percentiles():
     negative[:]=0
     negative[-1]=1
     assert '≥' in percentile_text(negative)
+
+
+def test_tail_percentiles_condition_on_sign_and_move_outward():
+    from arm_design.load_histograms import tail_percentile
+    values = [-1]*90 + [-100]*10 + [10]*10000
+    counts = np.histogram(values,edges())[0]
+    median = tail_percentile(counts,'minimum',.5,-100,10)
+    p95 = tail_percentile(counts,'minimum',.95,-100,10)
+    assert -100 <= p95['value'] < median['value'] < 0
+    assert p95['share'] == pytest.approx(100/10100)
+    assert p95['tail_fraction'] == pytest.approx(5/10100)
+    assert p95['interval'][0] <= p95['value'] <= p95['interval'][1]
+    assert not p95['exact']
+    assert tail_percentile(counts,'minimum',1,-100,10)['value'] == -100
+    assert tail_percentile(counts,'maximum',1,-100,10)['value'] == 10
+    assert tail_percentile(counts,'maximum',1,-100,10)['exact']
+    # Changing the opposite side's frequency cannot change the conditional quantile.
+    counts2 = np.histogram([-1]*90+[-100]*10+[10],edges())[0]
+    assert tail_percentile(counts2,'minimum',.95,-100,10)['value'] == p95['value']
+
+
+def test_tail_percentiles_handle_zero_missing_signs_and_open_bins():
+    from arm_design.load_histograms import tail_percentile
+    counts=np.histogram([0]*100,edges())[0]
+    assert tail_percentile(counts,'minimum',.95,0,0) is None
+    zero=tail_percentile(counts,'maximum',.95,0,0)
+    assert zero['value']==0 and zero['share']==1 and zero['tail_fraction']==0
+    counts=np.histogram([-2e6,2e6],edges())[0]
+    for side in ('minimum','maximum'):
+        result=tail_percentile(counts,side,.95,-2e6,2e6)
+        assert np.isfinite(result['interval']).all()
+        assert -2e6 <= result['value'] <= 2e6
+    with pytest.raises(ValueError):
+        tail_percentile(counts,'minimum',1.1,-2e6,2e6)
+
+
+def test_percentile_histogram_marks_threshold_and_shades_only_selected_tail():
+    counts=np.histogram([-100,-20,-1,2,20,100],edges())[0]
+    ids=np.flatnonzero(counts)
+    hist=go.Figure(go.Bar(x=ids,y=counts[ids],name='Selected run'))
+    focus=dict(kind='percentile',side='minimum',q=.95,value=-90)
+    chart=split_histogram(hist,'Fx_N',focus)
+    assert any('P95 negative threshold' in a.text for a in chart.layout.annotations)
+    shade=[s for s in chart.layout.shapes if s.type=='rect' and s.opacity==.12]
+    assert len(shade)==1 and shade[0].xref=='x'
+    root=ET.fromstring(base64.b64decode(preview_svg(counts,-90,'minimum').split(',')[1]))
+    assert any(e.attrib.get('opacity')=='.12' for e in root.iter())

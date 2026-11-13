@@ -10,7 +10,7 @@
 .chart-controls{max-width:540px;margin:16px 0 8px}.chart-controls label{margin-top:0}.chart-controls .note{margin-bottom:0}
 .fea-view{margin:12px 0}.fea-view #pose{height:340px;max-height:340px}.fea-view #pose .js-plotly-plot,.fea-view #pose .plot-container{max-height:340px}
 
-.fea-overview{display:grid;grid-template-columns:minmax(300px,2fr) minmax(0,3fr);gap:16px;align-items:start;margin:12px 0}.fea-overview .fea-view{margin:0}.fea-overview .link-summary{margin:0}.fea-overview .fea-mate{margin:0 0 10px;font-size:13px;font-weight:600}.fea-overview td{font-variant-numeric:tabular-nums;text-align:right}.fea-overview .note{margin-bottom:0}@media(max-width:1050px){.fea-overview{grid-template-columns:minmax(0,1fr)}}
+.fea-overview{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px;align-items:start;margin:12px 0}.fea-overview .fea-view{margin:0}.fea-overview .link-summary{margin:0}.fea-overview .fea-mate{margin:0 0 10px;font-size:13px;font-weight:600}.fea-overview td{font-variant-numeric:tabular-nums;text-align:right}.fea-overview .note{margin-bottom:0}@media(max-width:1050px){.fea-overview{grid-template-columns:minmax(0,1fr)}}
 .load-value{display:block;width:100%;padding:2px 0;margin:0;border:0;border-radius:2px;background:transparent;color:inherit;font:inherit;text-align:right;text-decoration:underline dotted #6d8b9c;text-underline-offset:4px}.load-value:hover,.load-value:focus-visible{background:#203e4a;color:#fff;outline:1px solid #25c9a3}.load-preview-popover{position:fixed;z-index:10000;pointer-events:none;width:388px;max-width:calc(100vw - 16px);padding:12px;background:#101b29;color:#d9e5ef;border:1px solid #587083;border-radius:8px;box-shadow:0 8px 32px #0009;font-size:12px;line-height:1.5}.load-preview-popover strong,.load-preview-popover small{display:block}.load-preview-popover small{color:#a4b8cc;margin-top:5px}.load-preview-popover img{display:block;width:100%;height:155px;object-fit:contain;margin:4px 0}.preview-statistics{font-variant-numeric:tabular-nums;color:#fff}#histogram-section{scroll-margin-top:16px}#histogram{height:320px;max-height:320px}#histogram .js-plotly-plot,#histogram .plot-container{max-height:320px}
 .trial-replay{border:1px solid #35516b;border-radius:8px;padding:14px;margin:8px 0 16px;background:#101b29}.replay-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.replay-toolbar button{margin:0}.replay-toolbar label{display:flex;align-items:center;gap:8px;margin:0;letter-spacing:0}.replay-toolbar select{background:#152437;color:#dce8f3;border:1px solid #35516b;padding:8px;border-radius:4px}.replay-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px}.replay-viewport{height:360px;min-width:0;overflow:hidden;border:1px solid #26394a;border-radius:6px}.replay-viewport canvas{display:block;width:100%;height:100%}.replay-readout{max-height:360px;overflow:auto}.replay-readout h3{font-size:13px;color:#25c9a3;margin:8px 0}.replay-readout table{width:100%;border-collapse:collapse;font-size:12px}.replay-readout th,.replay-readout td{padding:5px 8px;border-bottom:1px solid #26394a;text-align:left}.replay-readout td{text-align:right;font-variant-numeric:tabular-nums}.replay-clock{font-size:13px;font-variant-numeric:tabular-nums}.trial-replay input[type=range]{accent-color:#25c9a3;padding:0;margin:8px 0}.replay-warning{color:#ffb45b;font-size:13px}button:disabled{opacity:.5;cursor:default}@media(max-width:1050px){.replay-layout{grid-template-columns:minmax(0,1fr)}.replay-readout{display:flex;flex-wrap:wrap;gap:8px;max-height:260px}.replay-readout table{flex:1;min-width:220px}}
 #trial-player{scroll-margin-top:16px}.trial-replay{scroll-margin-top:16px}
@@ -96,3 +96,24 @@
 @media(max-width:850px){.runner-workspace{grid-template-columns:minmax(0,1fr)}}
 /* Dash's responsive graph also sets inline sizing; cap every canvas wrapper. */
 #runner-extremes,#runner-extremes .js-plotly-plot,#runner-extremes .plot-container{height:var(--runner-plot-height)!important;max-height:var(--runner-plot-height)!important;min-height:0}
+
+/* Compact signed tails: exact extrema and controls occupy adjacent columns. */
+.fea-table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}.fea-table-toolbar #reset-tail-percentiles{margin:0;padding:5px 9px;font-size:11px;white-space:nowrap}.fea-overview .fea-table-toolbar .fea-mate{margin:0}
+.fea-overview{align-items:stretch}.fea-overview>*{min-width:0}
+.fea-overview .link-summary table{table-layout:fixed}
+.fea-overview .link-summary th,.fea-overview .link-summary td{white-space:normal;vertical-align:middle;padding:7px 8px}
+.fea-overview .link-summary tbody tr{height:48px}
+.fea-overview .link-summary thead th{font-size:11px}
+.tail-controls{display:flex;align-items:center;gap:10px;min-width:0}
+.tail-readout{flex:0 0 100px;min-width:0}.tail-value{font-size:12px;font-weight:600;white-space:nowrap}
+.tail-maximum{flex-direction:row-reverse}.tail-maximum .tail-value{text-align:left}
+.tail-slider{flex:1;min-width:65px;padding:0 5px;text-align:left;--Dash-Fill-Interactive-Strong:#25c9a3;--Dash-Fill-Disabled:#35516b;--Dash-Fill-Inverse-Strong:#101b29}
+.tail-slider .dash-slider-root.has-marks{padding:6px 0 18px;height:28px}.tail-slider .dash-slider-mark{font-size:9px}
+.tail-slider .rc-slider-track{background:#25c9a3}.tail-slider .rc-slider-handle{border-color:#25c9a3;background:#152437}.tail-slider .rc-slider-rail{background:#35516b}.tail-slider .rc-slider-mark-text{color:#99aec2;font-size:9px}
+.tail-observed{font-size:12px;font-weight:600;white-space:nowrap}.tail-empty{color:#99aec2;font-size:11px}
+.fea-overview .note{font-size:11px;line-height:1.4;margin-top:8px}
+.fea-overview .fea-view{position:relative;min-height:360px}
+.fea-overview .fea-view #pose{position:absolute;inset:0;height:100%;max-height:none}
+.fea-overview .fea-view #pose .js-plotly-plot,.fea-overview .fea-view #pose .plot-container{max-height:none}
+@media(max-width:1350px){.tail-controls{gap:6px}.tail-readout{flex-basis:85px}.tail-value{font-size:11px}.fea-overview .link-summary th,.fea-overview .link-summary td{padding:6px}}
+@media(max-width:1050px){.fea-overview .fea-view{height:360px}.fea-overview .link-summary table{min-width:650px}}

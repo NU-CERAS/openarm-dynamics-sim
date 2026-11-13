@@ -46,7 +46,38 @@ def percentile_text(counts):
     return f'Median ≈ {estimate(.5)} · P5–P95 ≈ {estimate(.05)} to {estimate(.95)} (binned estimates)'
 
 
-def preview_svg(counts, value):
+def tail_percentile(counts, side, q, minimum, maximum):
+    """Conditional magnitude quantile, from zero toward the selected sign's tail.
+
+    Positive includes zero: legacy histogram bins do not separate exact zeros.
+    Interpolation assumes uniform samples inside a bin; the interval remains the
+    defensible resolution. Endpoints use exact recorded extrema, never infinity.
+    """
+    if side not in ('minimum', 'maximum') or not np.isfinite(q) or not 0 <= q <= 1:
+        raise ValueError('Choose a signed side and a percentile between zero and one.')
+    counts, e = np.asarray(counts), edges()
+    negative = side == 'minimum'
+    indices = np.flatnonzero((e[1:] <= 0 if negative else e[:-1] >= 0) & (counts > 0))
+    if negative:
+        indices = indices[::-1]
+    n = float(counts[indices].sum())
+    if not n:
+        return None
+    cumulative = np.cumsum(counts[indices])
+    rank = min(len(indices)-1, int(np.searchsorted(cumulative, q*n, side='left')))
+    index = int(indices[rank])
+    lo, hi = max(float(e[index]), float(minimum)), min(float(e[index+1]), float(maximum))
+    # Exact extrema also bound open-ended underflow/overflow bins.
+    fraction = float(np.clip((q*n-(cumulative[rank-1] if rank else 0))/counts[index], 0, 1))
+    value = hi-fraction*(hi-lo) if negative else lo+fraction*(hi-lo)
+    exact = q == 1 or minimum == maximum
+    if q == 1:
+        value = float(minimum if negative else maximum)
+    return dict(value=float(value), interval=[lo,hi], bin=index, exact=exact,
+                side_count=n, share=n/float(counts.sum()), tail_fraction=0. if minimum == maximum else (1-q)*n/float(counts.sum()))
+
+
+def preview_svg(counts, value, tail_side=None):
     """SVG uses the same signed bin indices as the full chart, including overflow."""
     counts = np.asarray(counts)
     selected = int(np.clip(np.searchsorted(edges(),value,side='right')-1,0,len(counts)-1))
@@ -63,6 +94,9 @@ def preview_svg(counts, value):
         bar = plot_h*counts[index]/highest
         color = NEGATIVE if edges()[index+1]<=0 else POSITIVE
         parts.append(f'<rect x="{left+(index-lo)*step:.2f}" y="{height-bottom-bar:.2f}" width="{max(.4,step-.5):.2f}" height="{bar:.2f}" fill="{color}"/>')
+    if tail_side:
+        a,b = (lo,selected) if tail_side=='minimum' else (selected,hi)
+        parts.append(f'<rect x="{left+(a-lo)*step:.2f}" y="{top}" width="{(b-a+1)*step:.2f}" height="{plot_h}" fill="#fff" opacity=".12"/>')
     xzero=left+(zero-lo)*step
     parts.append(f'<path d="M{xzero:.2f} {top}V{height-bottom}" stroke="#a7b9ca" stroke-dasharray="3 3"/>')
     x=left+(selected-lo+.5)*step
@@ -112,11 +146,17 @@ def split_histogram(hist, metric, focus=None):
     result.update_yaxes(title=hist.layout.yaxis.title.text,row=1,col=1)
     result.update_yaxes(rangemode='tozero')
     if focus:
-        col=1 if focus['value']<0 else 2
+        col=1 if (focus.get('kind')=='percentile' and focus['side']=='minimum') or focus['value']<0 else 2
         index=int(np.clip(np.searchsorted(e,focus['value'],side='right')-1,0,len(e)-2))
         result.add_vline(x=index,line_color='#fff',line_dash='dot',row=1,col=col)
-        result.add_annotation(text=f"Selected {focus['side']}: {focus['value']:+.5g}",
+        label = f"P{100*focus['q']:g} {'negative' if col==1 else 'positive / zero'} threshold" if focus.get('kind')=='percentile' else f"Selected {focus['side']}"
+        result.add_annotation(text=f"{label}: {focus['value']:+.5g}",
             x=.5,y=.98,yanchor='top',bgcolor='#101b29',xref='x domain' if col==1 else 'x2 domain',yref='y domain' if col==1 else 'y2 domain',showarrow=False,font_color='#fff')
+        if focus.get('kind')=='percentile' and focus['q'] < 1:
+            axis = result.layout.xaxis if col==1 else result.layout.xaxis2
+            bounds = axis.range or [index-.7,index+.7]
+            a,b = (bounds[0],index) if col==1 else (index,bounds[1])
+            result.add_vrect(x0=a,x1=b,fillcolor='#ffffff',opacity=.12,line_width=0,row=1,col=col)
         domain=result.layout.xaxis.domain if col==1 else result.layout.xaxis2.domain
         result.add_shape(type='rect',x0=domain[0],x1=domain[1],y0=0,y1=1,xref='paper',yref='paper',
                          line=dict(color='#d9e5ef',width=1),fillcolor='rgba(0,0,0,0)')

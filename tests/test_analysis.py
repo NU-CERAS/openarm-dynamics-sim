@@ -93,12 +93,49 @@ def test_restrained_export_and_dashboard(tmp_path):
                 yield from components(child)
     previews=[json.loads(c.to_plotly_json()['props']['data-load-preview']) for c in components(preview_table)
               if 'data-load-preview' in c.to_plotly_json()['props']]
+    # Exact extrema remain available alongside the new percentile previews.
+    previews = [p for p in previews if p.get('kind') != 'percentile']
     assert len(previews)==12
     loaded = connection_rows(state['interfaces'],'l3')[1][0]
     assert all(p['interface']==loaded and p['part']=='l3' and 'per trial' in p['weight'] for p in previews)
     for preview in previews:
         j = ['Fx_N','Fy_N','Fz_N','Mx_Nm','My_Nm','Mz_Nm'].index(preview['metric'])
         assert preview['value'] == stats[preview['side']][loaded,j]
+    # Each slider updates only its percentile readout; recorded min/max are siblings.
+    sliders = [c for c in components(preview_table) if isinstance(getattr(c,'id',None),dict)
+               and c.id['type']=='tail-slider']
+    assert len(sliders)==12 and all(c.value==.995 for c in sliders)
+    assert all(c.reverse==(c.id['side']=='minimum') for c in sliders)
+    reset = next(v['callback'].__wrapped__ for k,v in app.callback_map.items() if 'tail-slider' in k)
+    assert reset(1,[c.id for c in sliders]) == [.995]*12
+    assert reset(2,[c.id for c in sliders]) == [.995]*12
+    from dash.exceptions import PreventUpdate
+    with pytest.raises(PreventUpdate):
+        reset(0,[c.id for c in sliders])
+    stores = [c.data for c in components(preview_table) if isinstance(getattr(c,'id',None),dict)
+              and c.id['type']=='tail-data']
+    tail_key = next(k for k in app.callback_map if 'tail-readout' in k)
+    data = next(d for d in stores if d['minimum']<0 and d['side']=='minimum')
+    ident = dict(metric=data['metric'],side=data['side'])
+    from arm_design.load_histograms import tail_percentile
+    client = app.server.test_client()
+    for q in (.5,.99,1.):
+        response = client.post('/_dash-update-component',json=dict(
+            output=tail_key, outputs=dict(id=dict(type='tail-readout',**ident),property='children'),
+            inputs=[dict(id=dict(type='tail-slider',**ident),property='value',value=q),
+                    dict(id=dict(type='tail-data',**ident),property='data',value=data)],state=[],
+            changedPropIds=[json.dumps(dict(type='tail-slider',**ident),sort_keys=True,separators=(',',':'))+'.value']))
+        assert response.status_code==200
+        updates=response.json['response']
+        assert len(updates)==1 and 'tail-readout' in next(iter(updates))
+        button=next(iter(updates.values()))['children']['props']['children'][0]['props']
+        focus=json.loads(button['data-load-preview'])
+        expected=tail_percentile(data['counts'],'minimum',q,data['minimum'],data['maximum'])['value']
+        assert focus['value']==expected and focus['q']==q
+        chart,_,_=figures(path,None,loaded,data['metric'],'enumeration','accepted','trials','l3','minimum',focus)
+        assert any(f"P{q*100:g} negative threshold: {expected:+.5g}" in a.text for a in chart[0].layout.annotations)
+    assert all('observed' in c.to_plotly_json()['props']['aria-label'] for c in components(preview_table)
+               if getattr(c,'className',None)=='load-value tail-observed')
     # Switching links with the old connection still in flight must never leak its loads.
     from arm_design.dashboard import link_snapshots, pose_figure
     refs = state['interfaces']

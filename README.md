@@ -545,6 +545,19 @@ positive/zero panels using logarithmic bins. Both panels share a percentage scal
 and the full-distribution denominator, so their percentages together total 100%.
 These distributions describe test coverage, not real-world operating frequency.
 
+Each FEA component has independent negative and positive/zero percentile sliders,
+defaulting to 99.5% (adjustable from 50–100%). **Reset all to 99.5%** restores all twelve
+sliders in the selected link’s table. Negative percentiles rank load magnitude:
+moving toward 100% gives a more negative threshold. Each side shows its share of
+the distribution and the target outer-tail fraction; the exact observed minimum
+and maximum always remain visible. Intermediate thresholds are estimates interpolated
+within saved histogram bins; 100% uses the exact recorded extreme. Hover a threshold
+for its distribution and bin range, or click it to select the larger histogram with
+that tail shaded. Negative sliders are mirrored: slide left toward 100% to include
+the full negative tail; positive sliders reach 100% on the right. Exact min/max have
+their own columns beside the compact controls. The table receives two-thirds of
+the table/mesh row on wide screens, and the mesh stretches to match its height.
+
 The compact 3D viewer shows only the selected link's actual mesh, named mate points,
 and local XYZ axes. It uses the run's saved `model.mjb`, including mesh-centering,
 geom placement, and fixed merged-body transforms. Mate points use the same hinge
