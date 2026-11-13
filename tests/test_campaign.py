@@ -203,13 +203,18 @@ def test_aggressive_campaign_keeps_both_directions_and_exports_components(tmp_pa
     assert len(rows) == 12 and c == original
     np.testing.assert_allclose(rows[0]['a_deg'], rows[6]['b_deg'])
     np.testing.assert_allclose(rows[0]['b_deg'], rows[6]['a_deg'])
-    assert any(r['counted'] for r in rows) and any(not r['counted'] for r in rows)
+    assert any(r['counted'] for r in rows)
+    assert all(r['acceptance_policy'] == 'motor_loads_v2' for r in rows)
     assert rec.cfg['drive']['trajectory_feedforward']
     assert rec.cfg['sweep']['hold_s'] == .25
     for r in rows:
         assert max(r['peak_torque_fraction']) <= 1+1e-9
         if r['counted']:
-            assert r['max_tracking_error_deg'] <= 2 and max(np.abs(r['final_speed_deg_s'])) <= 5
+            assert not r['numerical_failure']
+            assert r['completed'] and not r['partial']
+            assert r['max_tracking_error_deg'] <= 5
+            assert max(np.abs(r['final_speed_deg_s'])) <= 20
+            assert r['samples'] > 0
     cases = part_cases(folder, 'l3', all_extremes=True)
     assert max(c['residual_n'] for c in cases) < 1e-8
     assert max(c['moment_residual_nm'] for c in cases) < 1e-8
@@ -217,7 +222,7 @@ def test_aggressive_campaign_keeps_both_directions_and_exports_components(tmp_pa
     reasons = (folder/'fea_setup_l3.csv').read_text()
     assert 'min Fx_N' in reasons and 'max Fx_N' in reasons
     # Replay uses the saved feedforward controller and shortened hold/settle.
-    first = next(r for r in rows if r['counted'])
+    first = next(r for r in rows if r['counted'] and r['completed'])
     replay = run_sweep(build_arm(rec.cfg), first['a_deg'], first['b_deg'], first['duration_s'])
     np.testing.assert_allclose(replay['maximum'], first['maximum'], rtol=1e-10, atol=1e-10)
 
@@ -228,3 +233,118 @@ def test_aggressive_search_rejects_unsafe_or_incomplete_settings(tmp_path, kwarg
     args.update(kwargs)
     with pytest.raises(ValueError):
         campaign(quick_config(), tmp_path, **args)
+
+
+def motor_load_config():
+    c = load_config()
+    c['sweep'].update(settle_s=.1, hold_s=.1, load_acceptance='motor_loads_v1')
+    c['drive']['trajectory_feedforward'] = True
+    a = np.mean([j['limits_deg'] for j in c['joints']], axis=1)
+    return c, a, a + np.array([70, 40, 0, 40, 0, 0, 0])
+
+
+def test_motor_loads_accept_tracking_lag_and_residual_speed():
+    c, a, b = motor_load_config()
+    r = run_sweep(build_arm(c), a, b, .1, strict=True)
+    assert r['completed'] and r['counted'] and not r['partial']
+    assert not r['tracking_ok'] and r['max_tracking_error_deg'] > 10
+    assert max(np.abs(r['final_speed_deg_s'])) > 5
+    assert max(r['peak_torque_fraction']) <= 1 + 1e-9
+    assert r['distribution']['count'] == r['samples'] == 200
+    assert len(r['diagnostics']) == 2
+
+
+def test_motor_loads_allow_initial_sag():
+    c, a, b = motor_load_config()
+    c['drive'].update(trajectory_feedforward=False, gravity_compensation=False)
+    c['sweep']['tracking_tolerance_deg'] = .000001
+    r = run_sweep(build_arm(c), a, b, .1, strict=True)
+    assert r['start_tracking_error_deg'] > c['sweep']['tracking_tolerance_deg']
+    assert r['samples'] > 0 and r['counted']
+
+
+@pytest.mark.parametrize('policy', ['motor_loads_v1', 'motor_loads_v2'])
+@pytest.mark.parametrize('event', ['collision', 'joint_limit', 'overspeed', 'numerical'])
+def test_motor_load_prefix_excludes_event_sample(monkeypatch, event, policy):
+    from arm_design import simulation
+    c, a, b = motor_load_config()
+    c['sweep'].update(load_acceptance=policy, tracking_tolerance_deg=5.)
+    baseline = run_sweep(build_arm(deepcopy(c)), a, b, .1, strict=True)
+    original = simulation.control
+    # 0.1 s approach + 0.1 s settle, then retain exactly 10 valid samples.
+    stop_time = .21
+    def control(arm, data, *args, **kwargs):
+        cap = original(arm, data, *args, **kwargs)
+        if data.time >= stop_time - 1e-9:
+            if event == 'joint_limit':
+                data.qpos[0] = np.deg2rad(c['joints'][0]['limits_deg'][1] + 10)
+            elif event == 'overspeed':
+                motor = c['motors'][c['joints'][0]['motor']]
+                data.qvel[0] = motor['no_load_speed_rpm'] * np.pi / 30 * 1.1
+            elif event == 'numerical':
+                raise RuntimeError('Injected numerical failure')
+        return cap
+    monkeypatch.setattr(simulation, 'control', control)
+    class Checker:
+        calls = 0
+        def contacts(self, q):
+            self.calls += 1
+            return {('test_a', 'test_b'): 1.} if event == 'collision' and self.calls == 211 else {}
+    r = run_sweep(build_arm(deepcopy(c)), a, b, .1, checker=Checker(), strict=True)
+    assert not r['completed'] and r['samples'] == 10
+    assert r['distribution']['count'] == 10
+    assert r['measured_duration_s'] == pytest.approx(.01)
+    assert r['counted'] is (event != 'numerical' and policy == 'motor_loads_v1')
+    assert r['partial'] is (event != 'numerical' and policy == 'motor_loads_v1')
+    assert r['numerical_failure'] is (event == 'numerical')
+    # Exactly the original, uncontaminated pre-event loads feed all extrema.
+    trace = baseline['distribution']['trace']
+    loads = trace['loads'][:10]
+    values = np.concatenate((loads, np.linalg.norm(loads[..., :3], axis=-1, keepdims=True),
+                             np.linalg.norm(loads[..., 3:], axis=-1, keepdims=True)), axis=-1)
+    np.testing.assert_allclose(r['minimum'], values.min(axis=0))
+    np.testing.assert_allclose(r['maximum'], values.max(axis=0))
+
+
+def test_motor_load_stop_before_measurement_rejects():
+    c, a, b = motor_load_config()
+    class Checker:
+        def contacts(self, q):
+            return {('test_a', 'test_b'): 1.}
+    r = run_sweep(build_arm(c), a, b, .1, checker=Checker(), strict=True)
+    assert not r['counted'] and not r['partial'] and r['samples'] == 0
+
+
+def test_partial_trial_does_not_establish_duration_search_success():
+    from arm_design.campaign import duration_search
+    calls = []
+    def run(a, b, duration):
+        calls.append(duration)
+        return dict(counted=True, completed=len(calls) == 1, partial=len(calls) != 1)
+    list(duration_search(run, [0], [1], (.1, 1.), 3))
+    assert calls == pytest.approx([1., .6, np.sqrt(.6)])
+
+
+def test_screened_motor_loads_reject_tracking_over_five_degrees():
+    c, a, b = motor_load_config()
+    c['sweep'].update(load_acceptance='motor_loads_v2', tracking_tolerance_deg=5.)
+    r = run_sweep(build_arm(c), a, b, .1, strict=True, include_failed=True)
+    assert not r['counted'] and not r['completed'] and not r['partial']
+    assert r['reason'] == 'Tracking error exceeded tolerance.'
+    assert 5 < r['max_tracking_error_deg'] < 10
+    assert r['samples'] > 0 and r['distribution']['count'] == r['samples']
+
+
+def test_screened_motor_loads_reject_final_speed_over_twenty():
+    c, a, b = motor_load_config()
+    # Isolate settling from tracking: the trajectory is stable but ends moving.
+    c['sweep'].update(load_acceptance='motor_loads_v2', tracking_tolerance_deg=180.,
+                      final_speed_tolerance_deg_s=20.)
+    r = run_sweep(build_arm(deepcopy(c)), a, b, .1, strict=True)
+    assert r['completed'] and not r['counted'] and not r['partial']
+    assert r['reason'] == 'Did not brake to within 20 deg/s at the end of the hold.'
+    assert 20 < max(np.abs(r['final_speed_deg_s'])) < 100
+    c['sweep']['final_speed_tolerance_deg_s'] = 100.
+    accepted = run_sweep(build_arm(c), a, b, .1, strict=True)
+    assert accepted['counted'] and accepted['reason'] == ''
+    np.testing.assert_array_equal(r['maximum'], accepted['maximum'])

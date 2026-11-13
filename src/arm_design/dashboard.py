@@ -412,16 +412,16 @@ def run_controls(models):
         html.Label('Robot'), dcc.Dropdown(id='model',options=[{'label':p.parent.parent.name if 'robots' in p.parts else 'Built-in arm','value':str(p)} for p in models],value=str(models[0]),clearable=False),
         html.Label('Run name (optional)'),dcc.Input(id='run-name',placeholder='e.g. 0.5 kg drumstick test',persistence=True),
         html.Label('Additional payload mass (kg)'),dcc.Input(id='payload-mass',type='number',min=0,value=5,step=.05,persistence='runner-defaults-v2'),
-        html.P('Added to the modeled end effector. Zero keeps its existing mass. A fixed payload box supplies mass, inertia and collision geometry.',className='note'),
+        html.P('Extra mass at the end effector; 0 keeps the existing mass.',title='A fixed payload box supplies mass, inertia and collision geometry.',className='note'),
         html.Div([
             html.Label('Maximum trials · free motion'),dcc.Input(id='free-count',type='number',min=1,step=1,value=1000,persistence='runner-defaults-v2'),
             html.Label('Motion'),dcc.Dropdown(id='motion-mode',options=[{'label':'Aggressive duration search','value':'aggressive'}, {'label':'Random sweep durations','value':'random'}],value='aggressive',clearable=False,persistence='runner-defaults-v2'),
-            html.Label('Minimum / maximum sweep duration (s)'),dcc.Input(id='min-duration',type='number',min=.1,value=.1,persistence='runner-defaults-v2'),dcc.Input(id='max-duration',type='number',min=.1,value=1,persistence='runner-defaults-v2'),
+            html.Label('Sweep duration · min / max (s)'),html.Div([dcc.Input(id='min-duration',type='number',min=.1,value=.1,persistence='runner-defaults-v2'),dcc.Input(id='max-duration',type='number',min=.1,value=1,persistence='runner-defaults-v2')],className='runner-input-pair'),
         ],id='free-run-controls'),
         html.Div([
             html.Label('Number of restrained poses'),dcc.Input(id='pose-count',type='number',min=1,step=1,value=3,persistence=True),
             html.Label('Maximum trials · restrained'),dcc.Input(id='restrained-count',type='number',min=1,step=1,value=6561,persistence=True),
-            html.Label('Trial duration / torque ramp (s)'),dcc.Input(id='duration',type='number',min=.01,value=.5,persistence=True),dcc.Input(id='ramp',type='number',min=.001,value=.05,persistence=True),
+            html.Label('Trial duration / torque ramp (s)'),html.Div([dcc.Input(id='duration',type='number',min=.01,value=.5,persistence=True),dcc.Input(id='ramp',type='number',min=.001,value=.05,persistence=True)],className='runner-input-pair'),
         ],id='restrained-run-controls',style={'display':'none'}),
         html.P(id='run-plan',className='note'),
         html.Details([html.Summary('Advanced run and payload settings'),
@@ -438,11 +438,11 @@ def run_controls(models):
             dcc.Checklist(id='full',options=[{'label':'Save full histories for playback','value':'full'}],value=['full'],persistence=True),
         ]),
         ],id='runner-settings'),
-        html.Button('Start test',id='launch',className='primary'),
-        html.Button('Stop test',id='cancel',disabled=True),
+        html.Div([html.Button('Start test',id='launch',className='primary'),
+            html.Button('Stop test',id='cancel',disabled=True)],className='runner-actions'),
         html.Div(id='launch-status',className='note'),html.Div(id='job-status',className='note'),
         html.Div(id='cancel-status',className='note'),
-        html.P('Stop finishes active trials and saves completed results. The trial limit includes rejected attempts. Each run gets its own saved settings and results.',className='note'),
+        html.P('Stop saves completed trials. Trial limits include rejected attempts.',className='note'),
     ],className='run-setup')
 
 
@@ -495,15 +495,15 @@ def create_app(root):
                 html.Progress(id='runner-progress',value=0,max=1),
                 html.Div(id='runner-counters',className='runner-counters'),
                 html.P(id='runner-config',className='note'),
-                dcc.Checklist(id='live-arm-enabled',options=[{'label':'Live arm preview · one worker','value':'live'}],value=[]),
+                html.Div([dcc.Checklist(id='live-arm-enabled',options=[{'label':'Live arm preview · one worker','value':'live'}],value=['live']),
                 html.Div(id='runner-arm-ready',style={'display':'none'}),
                 html.Div([html.Label('LOAD COMPONENT'),dcc.Dropdown(id='runner-metric',options=[
                     {'label':f'{m.replace("_", " ")}', 'value':m} for m in METRICS[:6]],value='Fx_N',clearable=False),
-                ],className='chart-controls'),
+                ],className='chart-controls')],className='runner-chart-toolbar'),
                 html.Div([html.Div(id='runner-arm',style={'display':'none'}),dcc.Graph(id='runner-extremes',figure=blank('Running signed extremes','Start a test to see live records.'),
-                    style={'height':'340px'},config={'responsive':True})],id='runner-visuals'),
-                html.P('Solid = running maximum; dashed = running minimum. Records use accepted trials at each link’s FEA connection. Click a legend entry to hide a link.',className='note'),
-                html.H2('Latest completed trial'),html.P(id='runner-latest',className='note'),
+                    responsive=True,config={'responsive':True})],id='runner-visuals'),
+                html.P('Solid: maximum · dashed: minimum · accepted trials at each link’s FEA connection. Click a legend to hide a link.',className='note runner-chart-note'),
+                html.Div([html.H2('Latest completed trial'),html.P(id='runner-latest',className='note')],className='runner-latest-heading'),
                 html.Div(id='runner-table',className='link-summary runner-table'),
                 html.P('Updates arrive as trials finish, approximately every 1.5 seconds. Latest-trial values may be rejected; only accepted trials update overall records. These are not instantaneous timestep readings.',className='note'),
             ]),
@@ -535,7 +535,7 @@ def create_app(root):
                 html.P('Signed components are split into negative and positive/zero panels. Percentages use the full distribution across both panels; bin widths are logarithmic. Click a bin to inspect contributing trials; press Esc to clear the filter.',className='note'),
                 dcc.Graph(id='convergence', figure=blank('Loading…'), responsive='auto', style={'height':'260px', 'minHeight':0}, config={'responsive':True}),
                 html.H2('Trial explorer'), html.P('Click a histogram bin to filter contributing trials. Link peaks are the largest connection magnitudes, not summed loads. Select a row to inspect its recorded history.', className='note'),
-                dash_table.DataTable(id='trials', columns=[{'name':k,'id':k} for k in ['id','stage','counted','duration_s','samples','peak_force_N','peak_moment_Nm','torque_utilization_pct','reason']],
+                dash_table.DataTable(id='trials', columns=[{'name':k,'id':k} for k in ['id','stage','counted','partial','max_tracking_error_deg','duration_s','samples','peak_force_N','peak_moment_Nm','torque_utilization_pct','reason']],
                     page_size=8, row_selectable='single', selected_rows=[], sort_action='native',
                     style_table={'overflowX':'auto'}, style_header={'backgroundColor':'#1c3045','color':'#dde8f3'},
                     style_cell={'backgroundColor':'#101b29','color':'#cbd8e5','border':'1px solid #26394a','textAlign':'left','maxWidth':'360px','whiteSpace':'normal'}),
@@ -578,6 +578,7 @@ def create_app(root):
         Input('live-arm-enabled','value'),Input('workspace-tab','value'))
 
     app.clientside_callback("""function(tab) {
+        document.documentElement.classList.toggle('runner-active', tab === 'runner');
         window.setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 80);
         return tab === 'runner' ? [{}, {display:'none'}] : [{display:'none'}, {}];
     }""",Output('runner-panel','style'),Output('viewer-panel','style'),Input('workspace-tab','value'))
@@ -618,6 +619,10 @@ def create_app(root):
         description = f'{name} · +{payload.get("mass_kg",0):g} kg payload'
         if path:
             description += ' · '+Path(path).name
+        if settings.get('acceptance_policy') == 'motor_loads_v1':
+            description += ' · Motor-load screening: tracking is diagnostic; accepted includes valid partial trials.'
+        elif settings.get('acceptance_policy') == 'motor_loads_v2':
+            description += f' · Tracking ≤{settings.get("tracking_tolerance_deg", 5):g}° · final speed ≤20°/s · complete trials only.'
         return str(path) if path else None,message,attempted,max(1,planned,attempted),counters,description,not bool(path)
 
     @app.callback(Output('runner-extremes','figure'),Output('runner-table','children'),Output('runner-latest','children'),
@@ -632,7 +637,10 @@ def create_app(root):
         figure,records,latest = runner_figures(safe(path),metric)
         old = previous.get('records',{}) if previous and previous.get('path')==path and previous.get('metric')==metric else {}
         table = runner_table(records,old)
-        detail = 'No completed trials yet.' if latest is None else f'Trial {latest["id"]+1} · '+('accepted' if latest['counted'] else 'rejected')
+        detail = 'No completed trials yet.' if latest is None else f'Trial {latest["id"]+1} · '+('accepted partial' if latest.get('partial') else 'accepted' if latest['counted'] else 'rejected')
+        if latest and latest.get('acceptance_policy') in ('motor_loads_v1', 'motor_loads_v2'):
+            detail += f' · tracking error {latest["max_tracking_error_deg"]:.1f}°'
+            detail += f' · final speed {max(np.abs(latest.get("final_speed_deg_s", [0]))):.1f}°/s'
         if latest and latest.get('reason'):
             detail += ' · '+latest['reason']
         return figure,table,detail,dict(version=version,path=path,metric=metric,
@@ -860,7 +868,7 @@ def create_app(root):
         rows = [dict(r, torque_utilization_pct=round(100*max(r.get('peak_torque_fraction', [0])), 1) if 'peak_torque_fraction' in r else None, **{f'peak_{metric}': round(max(r['maximum'][i][METRICS.index(metric)] for i in indices), 3)
                          for metric in ('force_N', 'moment_Nm')}) if indices and 'maximum' in r else r for r in rows]
         # Large per-connection extrema stay on disk; don't resend them in every table row.
-        rows = [{k:v for k,v in r.items() if k in ('id','stage','counted','duration_s','samples','reason','peak_force_N','peak_moment_Nm','torque_utilization_pct','pair_id','direction','search_step','search_role','full_history','max_clamp_position_error_m','max_clamp_angle_error_rad')} for r in rows]
+        rows = [{k:v for k,v in r.items() if k in ('id','stage','counted','partial','max_tracking_error_deg','final_speed_deg_s','start_tracking_error_deg','diagnostics','measured_duration_s','acceptance_policy','duration_s','samples','reason','peak_force_N','peak_moment_Nm','torque_utilization_pct','pair_id','direction','search_step','search_role','full_history','max_clamp_position_error_m','max_clamp_angle_error_rad')} for r in rows]
         selected = selection if ctx.triggered_id == 'refresh' and selection and selection[0] < len(rows) else []
         return rows, no_update if ctx.triggered_id == 'refresh' else selected, version
 
@@ -878,7 +886,7 @@ def create_app(root):
         detail = ''
         if r:
             p = safe(path)/'trials'/str(r['id'])/'trace.npz'
-            detail = json.dumps({k:r[k] for k in ('id','pair_id','direction','search_step','search_role','reason','max_clamp_position_error_m','max_clamp_angle_error_rad') if k in r})
+            detail = json.dumps({k:r[k] for k in ('id','partial','max_tracking_error_deg','start_tracking_error_deg','final_speed_deg_s','diagnostics','measured_duration_s','pair_id','direction','search_step','search_role','reason','max_clamp_position_error_m','max_clamp_angle_error_rad') if k in r})
             if p.exists():
                 v = load_npz(str(p))
                 y = metrics(v['loads'])[:, int(interface or 0), METRICS.index(metric)]

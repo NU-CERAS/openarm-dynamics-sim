@@ -64,11 +64,13 @@ def control(arm, d, target, velocity=None, acceleration=None):
     return cap
 
 
-def step(arm, d, target, velocity=None, recorder=None, phase='jog', acceleration=None):
+def step(arm, d, target, velocity=None, recorder=None, phase='jog', acceleration=None, sample_guard=None):
     cap = control(arm, d, target, velocity, acceleration)
     # Log all quantities at the same PRE-step timestamp. mj_step's acceleration/
     # torque fields otherwise describe the old state but qpos describes the new one.
     mujoco.mj_forward(arm.model, d)
+    if sample_guard is not None:
+        sample_guard(d)
     row = dict(time_s=float(d.time), q=d.qpos.copy(), velocity=d.qvel.copy(),
                target=np.asarray(target).copy(), torque=d.qfrc_actuator.copy(),
                cap=cap.copy(), rated_cap=torque_limit(arm.cfg, d.qvel, rated=True),
@@ -85,7 +87,7 @@ def step(arm, d, target, velocity=None, recorder=None, phase='jog', acceleration
 
 class Sweep:
     """Approach the start, settle, sweep in either direction, then hold."""
-    def __init__(self, arm, data, direction='A -> B'):
+    def __init__(self, arm, data, direction='A -> B', require_start_tracking=True):
         if direction not in ('A -> B', 'B -> A'):
             raise ValueError('Sweep direction must be A -> B or B -> A.')
         self.direction = direction
@@ -99,12 +101,14 @@ class Sweep:
         self.complete = False
         self.reason = ''
         self.checked_start = False
+        self.require_start_tracking = require_start_tracking
+        self.start_error_deg = None
         s = self.cfg['sweep']
         self.sweep_start = s['approach_s'] + s['settle_s']
         self.sweep_end = self.sweep_start + s['duration_s']
         self.end = self.sweep_end + s['hold_s']
 
-    def tick(self, arm, data, recorder=None):
+    def tick(self, arm, data, recorder=None, sample_guard=None):
         t = float(data.time) - self.start_time
         s = self.cfg['sweep']
         if t + 1e-9 >= self.end:
@@ -121,7 +125,8 @@ class Sweep:
             if not self.checked_start:
                 self.checked_start = True
                 err = np.max(np.abs(np.rad2deg(data.qpos-self.a)))
-                if err > s['tracking_tolerance_deg']:
+                self.start_error_deg = float(err)
+                if self.require_start_tracking and err > s['tracking_tolerance_deg']:
                     self.reason = f'Could not reach {self.start_name}: {err:.2f} deg error. Sweep not executed.'
                     return False
             q, v = smooth_move(self.a, self.b, t-self.sweep_start, s['duration_s'])
@@ -129,7 +134,8 @@ class Sweep:
             phase = 'sweep'
         else:
             q, v, phase = self.b, np.zeros_like(self.b), 'hold'
-        row = step(arm, data, q, v, recorder=recorder, phase=self.direction+': '+phase, acceleration=acceleration)
+        row = step(arm, data, q, v, recorder=recorder, phase=self.direction+': '+phase, acceleration=acceleration,
+                   sample_guard=sample_guard)
         row['time_s'] = t
         row['phase'] = phase
         self.rows.append(row)

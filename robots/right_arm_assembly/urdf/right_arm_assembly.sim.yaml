@@ -148,5 +148,5 @@ sweep:
   approach_s: 2.0
   settle_s: 1.0
   hold_s: 1.0
-  tracking_tolerance_deg: 2.0
+  tracking_tolerance_deg: 5.0
   jog_speed_deg_s: 30.0

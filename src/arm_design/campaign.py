@@ -47,32 +47,60 @@ def _init(cfg, include_failed=False, max_overlap_mm=0., full_history=False, canc
     _preview = LivePublisher(Path(cancel_path).parent if cancel_path else None, preview_owner)
 
 
+class PhysicalStop(RuntimeError):
+    """The next sample is outside the free-motion load model; keep only its prefix."""
+
+
 def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=False, preview=None):
     """One recorded A -> B sweep starting at rest at A; only sweep+hold loads count.
 
-    By default a sweep counts only if it tracks within tolerance: commands the
-    arm cannot follow end in joint-stop impacts, not motor-driven sweep loads.
-    With a checker, a sweep whose simulated motion self-collides is stopped."""
+    Motor-load v2 requires tracked, completed sweeps and a final-speed check.
+    Saved v1 runs retain their relaxed acceptance policy for reproducibility.
+    Numerical failures always exclude the whole motor-load trial."""
     s = arm.cfg['sweep']
+    policy = s.get('load_acceptance')
+    motor_loads = policy in ('motor_loads_v1', 'motor_loads_v2')
+    screened = policy == 'motor_loads_v2'
     # Starting at A makes the approach trivial; settle still removes gravity sag.
     s.update(a_deg=[float(x) for x in a], b_deg=[float(x) for x in b],
              duration_s=float(duration), approach_s=.1)
     data = arm.data()
-    run = Sweep(arm, data)
+    run = Sweep(arm, data, require_start_tracking=not motor_loads)
     rec = FEARecording(arm, data)
     rec.phases = ('sweep', 'hold')
     result = dict(a_deg=s['a_deg'], b_deg=s['b_deg'], duration_s=float(duration))
-    collision, validity = {}, ''
+    collision, validity, physical_stop, numerical_failure = {}, '', False, False
+    def guard(d):
+        nonlocal collision
+        # Check the exact PRE-step state before recording any reaction. In
+        # particular, never admit a joint-stop impulse into the retained prefix.
+        if (not all(np.isfinite(v).all() for v in (d.qpos, d.qvel, d.qacc, d.qfrc_actuator))
+                or any(w.number for w in d.warning)):
+            raise RuntimeError('Numerical instability; entire trial excluded.')
+        if np.any(d.efc_type == int(mujoco.mjtConstraint.mjCNSTR_LIMIT_JOINT)):
+            raise PhysicalStop('Joint-limit constraint activated.')
+        if np.any(np.abs(d.qvel)*30/np.pi > np.array([arm.cfg['motors'][j['motor']]['no_load_speed_rpm'] for j in arm.cfg['joints']])):
+            raise PhysicalStop('Motor no-load speed exceeded.')
+        if checker:
+            collision = checker.contacts(d.qpos)
+            if collision:
+                raise PhysicalStop('Self/floor collision: '+describe(collision))
     if preview:
         preview.begin('campaign',float(duration))
     try:
-        while run.tick(arm, data, recorder=rec):
+        while run.tick(arm, data, recorder=rec, sample_guard=guard if motor_loads else None):
             if preview:
                 preview.sample(data,run.rows[-1]['phase'])
             if not rec.active:
                 run.reason = rec.reason
                 break
-            if strict and run.rows[-1]['phase'] in rec.phases:
+            if screened and run.rows[-1]['phase'] in rec.phases:
+                row = run.rows[-1]
+                if np.max(np.abs(np.rad2deg(row['q']-row['target']))) > s['tracking_tolerance_deg']:
+                    validity = 'Tracking error exceeded tolerance.'
+                    run.reason = validity
+                    break
+            if strict and not motor_loads and run.rows[-1]['phase'] in rec.phases:
                 row = run.rows[-1]
                 if np.any(data.efc_type == int(mujoco.mjtConstraint.mjCNSTR_LIMIT_JOINT)):
                     validity = 'Joint-limit constraint activated.'
@@ -84,25 +112,39 @@ def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=Fa
                     run.reason = validity
                     break
             # Overshoot can collide even when the planned path is clear.
-            if checker and (strict or len(run.rows) % CHECK_EVERY == 0) and run.rows[-1]['phase'] in rec.phases:
+            if not motor_loads and checker and (strict or len(run.rows) % CHECK_EVERY == 0) and run.rows[-1]['phase'] in rec.phases:
                 collision = checker.contacts(data.qpos)
                 if collision:
                     run.reason = 'Self-collision: '+describe(collision)
                     break
+    except PhysicalStop as exc:
+        physical_stop = True
+        run.reason = str(exc)
     except RuntimeError as exc:
+        numerical_failure = True
         run.reason = str(exc)
     rec.stop(run.reason)
     s = summary(run)
-    if strict and run.complete and run.rows and np.max(np.abs(np.rad2deg(run.rows[-1]['velocity']))) > 5.:
-        validity = 'Did not brake to within 5 deg/s at the end of the hold.'
+    final_speed_limit = arm.cfg['sweep'].get('final_speed_tolerance_deg_s', 20.) if screened else 5.
+    if (screened or strict and not motor_loads) and run.complete and run.rows and np.max(np.abs(np.rad2deg(run.rows[-1]['velocity']))) > final_speed_limit:
+        validity = f'Did not brake to within {final_speed_limit:g} deg/s at the end of the hold.'
         run.reason = validity
-    if strict and not s['tracking_ok'] and not run.reason:
+    if strict and not motor_loads and not s['tracking_ok'] and not run.reason:
         run.reason = 'Tracking error exceeded tolerance.'
     result.update(completed=bool(run.complete and rec.rows), reason=run.reason, collision=describe(collision),
                   tracking_ok=s['tracking_ok'], samples=len(rec.rows),
                   max_tracking_error_deg=rec.max_tracking_error_deg,
                   saturated_samples=rec.saturated_samples, contact_samples=rec.contact_samples)
     result['counted'] = result['completed'] and (result['tracking_ok'] or include_failed) and not validity
+    if motor_loads:
+        result['counted'] = bool(rec.rows) and not numerical_failure and (run.complete or physical_stop)
+        if screened:
+            result['counted'] = bool(result['completed'] and result['tracking_ok'] and not run.reason and not numerical_failure)
+        result.update(partial=bool(result['counted'] and not run.complete),
+                      acceptance_policy=policy, numerical_failure=numerical_failure,
+                      stop_category='physical' if physical_stop else 'numerical' if numerical_failure else 'motion' if validity else 'complete' if run.complete else 'recording',
+                      start_tracking_error_deg=run.start_error_deg,
+                      measured_duration_s=len(rec.rows)*arm.model.opt.timestep)
     task = [r for r in run.rows if r['phase'] in rec.phases]
     if task:
         applied, caps = np.array([r['torque'] for r in task]), np.array([r['cap'] for r in task])
@@ -110,6 +152,12 @@ def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=Fa
         result.update(peak_torque_fraction=utilization.max(axis=0).tolist(),
                       peak_speed_deg_s=np.rad2deg(np.abs([r['velocity'] for r in task]).max(axis=0)).tolist(),
                       final_speed_deg_s=np.rad2deg(run.rows[-1]['velocity']).tolist())
+    if motor_loads:
+        result['diagnostics'] = []
+        if rec.max_tracking_error_deg > arm.cfg['sweep']['tracking_tolerance_deg']:
+            result['diagnostics'].append(f'Tracking error {rec.max_tracking_error_deg:.1f} deg'+(' exceeds tolerance.' if screened else ' (informational).'))
+        if max(np.abs(result.get('final_speed_deg_s', [0]))) > final_speed_limit:
+            result['diagnostics'].append('Residual motion exceeds final-speed tolerance.' if screened else 'Residual motion at end of recorded window (informational).')
     result['distribution'] = distribution(rec.rows, _full_history)
     if not rec.rows:
         return result
@@ -136,7 +184,7 @@ def duration_search(run, a, b, bounds, attempts, pair_id=0, direction='A to B'):
         result.update(pair_id=pair_id, direction=direction, search_step=step,
                       search_role='baseline' if step == 0 else 'duration_search')
         yield result
-        if result['counted']:
+        if result['counted'] and result.get('completed', True):
             passed = duration
             duration = np.sqrt(failed*passed) if failed is not None else max(lower, duration*.6)
         else:
@@ -324,7 +372,7 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         raise ValueError('Aggressive search needs at least two duration steps per complete direction.')
     cfg = deepcopy(cfg)
     if aggressive:
-        cfg['sweep'].update(settle_s=.1, hold_s=.25)
+        cfg['sweep'].update(settle_s=.1, hold_s=.25, load_acceptance='motor_loads_v2', final_speed_tolerance_deg_s=20.)
         cfg['drive']['trajectory_feedforward'] = True
         cfg['simulation']['step_s'] = min(cfg['simulation']['step_s'], .0005)
     workers = workers or multiprocessing.cpu_count()
@@ -350,11 +398,15 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         campaign_mode='aggressive' if aggressive else 'random')
     if aggressive:
         settings.update(search_steps=search_steps, pose_pairs=(samples+2*search_steps-1)//(2*search_steps),
-                        hold_s=.25, settle_s=.1, timestep_s=cfg['simulation']['step_s'], final_speed_tolerance_deg_s=5.,
+                        hold_s=.25, settle_s=.1, timestep_s=cfg['simulation']['step_s'], final_speed_tolerance_deg_s=20.,
+                        tracking_tolerance_deg=cfg['sweep']['tracking_tolerance_deg'],
+                        acceptance_policy='motor_loads_v2', tracking_required=True, partial_trials_included=False,
                         controller='PD + inverse-dynamics trajectory feedforward, within configured torque/speed caps',
                         assumptions=['Adaptive duration search with torque-limited inverse-dynamics feedforward.',
                                      'Both directions start independently at rest; no continuous reversal is claimed.',
-                                     'Torque saturation alone is allowed; tracking, joint stops, overspeed and collisions reject trials.',
+                                     'Sweep/hold tracking must stay within the configured tolerance; starting sag remains diagnostic.',
+                                     'The full sweep and hold must complete, with final joint speeds at most 20 deg/s.',
+                                     'Tracking failures, joint stops, overspeed, collisions and numerical failures exclude the entire trial; recorded prefixes remain inspectable.',
                                      'Every physics timestep contributes statistics; search frequencies are not a duty cycle.'])
     if cfg.get('model_type') == 'urdf':
         settings['urdf_sha256'] = hashlib.sha256(Path(cfg['urdf']['path']).read_bytes()).hexdigest()
@@ -481,11 +533,12 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         store.finish('cancelled' if store.cancelled else 'failed', error='No accepted sweeps.')
         if store.cancelled:
             return store.path, None
-        raise RuntimeError('No sweep tracked within tolerance; lengthen --min-duration or pass --include-failed.')
-    settings = dict(**store.state['settings'], refine_iterations=iterations, duration_range_s=[lo_d, hi_d],
+        raise RuntimeError('No usable motor-load samples; inspect trial stop reasons.' if aggressive else 'No sweep tracked within tolerance; lengthen --min-duration or pass --include-failed.')
+    settings = dict(store.state['settings'], refine_iterations=iterations, duration_range_s=[lo_d, hi_d],
                     sweeps=len(sweeps), completed=sum(s['completed'] for s in sweeps),
                     tracking_ok=sum(s['tracking_ok'] for s in sweeps), counted=sum(s['counted'] for s in sweeps),
                     tracking_tolerance_deg=cfg['sweep']['tracking_tolerance_deg'],
+                    partial_trials=sum(s.get('partial', False) for s in sweeps),
                     colliding_paths_skipped=rejected,
                     collided=sum(bool(s['collision']) for s in sweeps),
                     ignored_pairs=sorted(map(list, checker.ignored)) if checker else [],
@@ -496,11 +549,12 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         with (folder/'sweeps.csv').open('w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['sweep', 'stage', 'duration_s', 'completed', 'tracking_ok', 'counted', 'max_tracking_error_deg',
-                             'saturated_samples', 'reason', 'collision', *(f'a_{j["name"]}_deg' for j in cfg['joints']),
+                             'saturated_samples', 'reason', 'collision', 'partial', 'measured_duration_s', 'start_tracking_error_deg', 'final_max_speed_deg_s', *(f'a_{j["name"]}_deg' for j in cfg['joints']),
                              *(f'b_{j["name"]}_deg' for j in cfg['joints'])])
             for i, s in enumerate(sweeps):
                 writer.writerow([i, s['stage'], s['duration_s'], s['completed'], s['tracking_ok'],
-                                 s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], s['collision'], *s['a_deg'], *s['b_deg']])
+                                 s['counted'], s['max_tracking_error_deg'], s['saturated_samples'], s['reason'], s['collision'], s.get('partial', False), s.get('measured_duration_s', ''),
+                                 s.get('start_tracking_error_deg', ''), max(np.abs(s.get('final_speed_deg_s', [0]))), *s['a_deg'], *s['b_deg']])
         (folder/'campaign.json').write_text(json.dumps(settings, indent=2))
         (folder/'convergence.csv').write_bytes((store.path/PROGRESS).read_bytes())
         if aggressive:
@@ -516,6 +570,7 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
             from collections import Counter
             accepted = [r for r in sweeps if r['counted']]
             validation = dict(trials=len(sweeps), accepted=len(accepted), rejected=len(sweeps)-len(accepted),
+                accepted_partial_trials=sum(r.get('partial', False) for r in accepted),
                 physics_samples=audited_samples, distribution_failures=distribution_failures,
                 rejected_reasons=dict(Counter(r['reason'] for r in sweeps if not r['counted'])),
                 accepted_saturated_trials=sum(r['saturated_samples'] > 0 for r in accepted),

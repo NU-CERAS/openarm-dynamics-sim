@@ -650,12 +650,17 @@ feedforward, all **inside** the existing derated speed-dependent actuator torque
 caps. This represents a model-based controller; ordinary campaigns retain their
 original controller. The sweep is a smooth quintic with acceleration and braking,
 followed by a 0.25 s hold; both directions are separate runs, not a continuous reversal.
-Saturation itself is allowed. Tracking error beyond the configured tolerance,
-activated joint limits, speed beyond the no-load limit, collision, instability, or
-failure to settle below 5 degrees/s prevents a trial contributing accepted peaks.
-Actual collisions are checked every physics step in aggressive mode. Rejected
-prefixes remain available for inspection. Do not enable `--include-failed` or disable
-collision checking for this mode.
+Torque saturation is allowed. New aggressive campaigns require tracking within
+`sweep.tracking_tolerance_deg` throughout sweep/hold (5° for the right arm), and
+all recorded final joint speeds must be at most 20°/s. The whole sweep and hold
+must complete. Starting-pose sag remains diagnostic; sweep tracking is still checked.
+Collision, joint-limit activation and overspeed stop recording before the offending
+sample and reject the **entire trial**. Numerical or recording failures also reject
+the entire trial. Recorded prefixes remain inspectable but do not contribute to
+accepted extrema or histograms. Runner shows the acceptance policy and motion
+diagnostics. These rules apply to newly started aggressive campaigns; saved runs,
+including relaxed `motor_loads_v1` runs with accepted partial trials, retain their
+original policy and results. Ordinary random/restrained rules are unchanged.
 
 Aggressive screening uses a timestep no larger than 0.5 ms. By default on the CLI, after the search,
 record-setting trials are rerun at half and quarter that timestep;
@@ -683,7 +688,7 @@ is required. Each trial starts at rest; only sweep and hold samples are measured
 `--iterations 20` enables an additional peak-seeking refinement stage. The dashboard
 default is zero refinement; the existing CLI default remains 20. Random and refinement
 statistics are separate, so optimization does not silently distort an operating
-histogram. Failed tracking and colliding motions remain inspectable but do not enter
+histogram. In ordinary random mode, failed tracking and colliding motions remain inspectable but do not enter
 accepted statistics unless tracking failures are explicitly allowed by `--include-failed`.
 These distributions describe random exploration, not a measured drumming duty cycle.
 Drum strikes/rebound and a task-weighted motion generator are outside this experiment.

@@ -143,7 +143,10 @@ def main():
             print(f'Cancelled: {folder}')
             return
         st=rec.settings
-        print(f'{st["counted"]} of {st["sweeps"]} sweeps counted (tracking within {st["tracking_tolerance_deg"]:g} deg)')
+        policy = 'motor-load samples, including valid partial trials; tracking is diagnostic' if st.get('acceptance_policy') == 'motor_loads_v1' else f'tracking within {st["tracking_tolerance_deg"]:g} deg'
+        if st.get('acceptance_policy') == 'motor_loads_v2':
+            policy += '; final speed ≤20 deg/s; complete trials only'
+        print(f'{st["counted"]} of {st["sweeps"]} sweeps counted ({policy})')
         if st['max_overlap_mm'] is not None:
             print(f'Self-collision: {st["colliding_paths_skipped"]} colliding random paths skipped, {st["collided"]} sweeps stopped mid-motion')
         print(f'{"interface":32} {"max force N":>12} {"max moment Nm":>14}  sweeps')
