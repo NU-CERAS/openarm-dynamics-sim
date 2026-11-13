@@ -21,6 +21,9 @@ def positive(value, label, zero=False):
 
 
 def validate(c):
+    if 'analysis_payload' in c:
+        from .payload import validate_payload
+        validate_payload(c['analysis_payload'])
     if c.get('model_type') == 'urdf':
         from .urdf import validate_urdf_config
         validate_urdf_config(c)
@@ -80,6 +83,8 @@ def validate_motion(c):
     vector(c['gravity_m_s2'], 3, 'gravity_m_s2')
     if not 0 < c['drive']['torque_derating'] <= 1:
         raise ValueError('Torque derating must be in (0, 1]')
+    if not isinstance(c['drive'].get('trajectory_feedforward', False), bool):
+        raise ValueError('drive.trajectory_feedforward must be true or false')
     for k in ('speed_envelope', 'gravity_compensation'):
         if not isinstance(c['drive'][k], bool):
             raise ValueError(f'drive.{k} must be true or false')

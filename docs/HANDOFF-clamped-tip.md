@@ -1,6 +1,12 @@
+> Superseded status: the static clamped feature is implemented and validated. MODEL.md
+> and the comment encoding are updated. Dynamic `restrained` enumeration, random-only
+> campaigns, distribution recording, and the local Load Lab dashboard are now implemented;
+> see README.md's Load Lab section for commands, assumptions, and result formats.
+> The notes below preserve the original handoff, not current outstanding work.
+
 # Handoff: clamped-tip case for `arm-sim bounds`
 
-Status as of 2026-11-12, branch `feature/load-campaign`. Nothing below is committed; all changes are in the working tree.
+Historical handoff as of 2026-11-12, branch `feature/load-campaign`. Nothing below is committed; all changes are in the working tree.
 
 ## Goal
 

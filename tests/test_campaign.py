@@ -55,18 +55,19 @@ def test_untrackable_sweeps_are_excluded_unless_requested():
     arm = build_arm(quick_config())
     a, b = np.zeros(7), np.array([-150, -150, 0, 120, 0, 0, 0])
     r = run_sweep(arm, a, b, .1)
-    assert r['completed'] and not r['tracking_ok'] and not r['counted'] and 'maximum' not in r
+    assert r['completed'] and not r['tracking_ok'] and not r['counted'] and r['distribution']['count'] == r['samples']
     assert run_sweep(arm, a, b, .1, include_failed=True)['counted']
 
 
 def test_campaign_exports_load_cases_for_every_peak(tmp_path):
     c = quick_config()
-    folder, rec = campaign(c, tmp_path, samples=1, iterations=1, duration_range=(1., 1.5),
+    folder, rec = campaign(c, tmp_path, samples=1, iterations=1, duration_range=(4., 5.),
                            workers=1, seed=3, log=lambda *a, **k: None)
     sweeps = list(csv.DictReader((folder/'sweeps.csv').open()))
-    # Two saved sweeps + one random + one refinement per reported row (mate or delta) force/moment.
-    assert len(sweeps) == 3 + 2*len(rec.interfaces)
-    assert [s['stage'] for s in sweeps[:3]] == ['saved', 'saved', 'random']
+    # One random sweep + one refinement per reported row force/moment.
+    assert len(sweeps) == 1 + 2*len(rec.interfaces)
+    assert sweeps[0]['stage'] == 'random'
+    assert all(s['stage'] == 'refine' for s in sweeps[1:])
     cases = json.loads((folder/'load_cases.json').read_text())['samples']
     labels = [f['label'] for f in rec.interfaces]
     for peak in csv.DictReader((folder/'peaks.csv').open()):
@@ -78,9 +79,11 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
             loads = np.array(case['loads_local'][i])
             value = np.concatenate((loads, [np.linalg.norm(loads[:3]), np.linalg.norm(loads[3:])]))[j]
             assert value == pytest.approx(float(peak['minimum' if side == 'min' else 'maximum']), rel=1e-12, abs=1e-12)
-    # The campaign can only raise peaks over the saved A -> B sweep alone.
+    # The campaign can only raise peaks over its initial random sweep.
     arm = build_arm(quick_config())
-    saved = run_sweep(arm, c['sweep']['a_deg'], c['sweep']['b_deg'], c['sweep']['duration_s'])
+    first = rec.sweeps[0]
+    assert first['a_deg'] != c['sweep']['a_deg'] and first['b_deg'] != c['sweep']['b_deg']
+    saved = run_sweep(arm, first['a_deg'], first['b_deg'], first['duration_s'])
     assert np.all(rec.maximum >= saved['maximum']) and np.all(rec.minimum <= saved['minimum'])
     meta = json.loads((folder/'metadata.json').read_text())
     assert meta['campaign']['sweeps'] == len(sweeps) and meta['samples'] == len(cases)
@@ -102,14 +105,14 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
                 assert np.linalg.norm(state[part]) == pytest.approx(row[key], rel=1e-12)
             np.testing.assert_allclose(state, cases[rec.max_index[i, j]]['loads_local'][i], rtol=1e-12)
     rows = series(head)
-    assert [r['label'] for r in rows] == labels and {r['kind'] for r in rows} == {'proximal', 'distal', 'delta'}
+    assert [r['label'] for r in rows] == labels and {r['kind'] for r in rows} == {'proximal', 'distal'}
     assert np.all(rise_pct(values[:, 3:][:, [r[m][0] for r in rows for m in METRICS[6:]]]) >= 0)
     # The live figure draws from this file, from an older magnitude-only one, and past a half-written line.
     import matplotlib
     matplotlib.use('Agg')
     fig, axes, tables = figure()
     draw(folder/'convergence.csv', axes, tables)
-    assert any(t.get_text() == 'link1 delta' for t in tables[0].texts) and len(axes[0].lines) >= len(rows)
+    assert any(t.get_text() == 'link1 <- link2' for t in tables[0].texts) and len(axes[0].lines) >= len(rows)
     old = tmp_path/'old.csv'
     old.write_text('counted,sweeps,elapsed_s,stage,b <- a|force_N,b <- a|moment_Nm\n10,12,1.0,random,5.0,2.0\n20,25,2.0,ref')
     assert series(read(old)[0])[0]['force_N'] == (0, None) and len(read(old)[1]) == 1
@@ -125,7 +128,7 @@ def yaml_unchanged(c):
 def test_viewer_replay_pauses_on_the_exact_recorded_peak(tmp_path):
     config = tmp_path/'arm.yaml'
     config.write_text(yaml.safe_dump(quick_config(), sort_keys=False))
-    campaign(load_config(config), tmp_path/'results'/'nested', samples=0, iterations=0,
+    campaign(load_config(config), tmp_path/'results'/'nested', samples=1, iterations=0, duration_range=(4., 5.), seed=3,
              workers=1, log=lambda *a, **k: None)
     e = Experiment(config, tmp_path/'results')
     saved = deepcopy(e.cfg['sweep'])
@@ -174,3 +177,54 @@ def test_colliding_sweeps_stop_and_never_count():
     assert r['reason'].startswith('Self-collision')
     clear = run_sweep(arm, np.zeros(7), [30, 20, 0, 30, 0, 0, 0], 2., checker=checker)
     assert clear['counted'] and clear['collision'] == ''
+
+
+def test_aggressive_duration_search_brackets_feasibility():
+    from arm_design.campaign import duration_search
+    def run(a, b, duration):
+        return dict(counted=duration >= 1., duration_s=duration, saturated_samples=10)
+    rows = list(duration_search(run, [0], [1], (.1, 5.), 8, pair_id=7))
+    assert len(rows) == 8 and any(not r['counted'] for r in rows)
+    assert min(r['duration_s'] for r in rows if r['counted']) < 1.05
+    assert all(r['pair_id'] == 7 for r in rows)
+    assert [r['search_step'] for r in rows] == list(range(8))
+    # Saturation alone does not reject a physically valid trial.
+    assert all(r['saturated_samples'] and r['counted'] for r in rows if r['duration_s'] >= 1.)
+
+
+def test_aggressive_campaign_keeps_both_directions_and_exports_components(tmp_path):
+    c = load_config(ROOT/'robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml')
+    original = deepcopy(c)
+    folder, rec = campaign(c, tmp_path, samples=12, iterations=0, duration_range=(.1, 2.),
+                           workers=2, seed=17, aggressive=True, search_steps=6, log=lambda *a, **k:None)
+    from arm_design.analysis import trials
+    from arm_design.fea_cases import part_cases
+    rows = trials(folder.parent, accepted='all')
+    assert len(rows) == 12 and c == original
+    np.testing.assert_allclose(rows[0]['a_deg'], rows[6]['b_deg'])
+    np.testing.assert_allclose(rows[0]['b_deg'], rows[6]['a_deg'])
+    assert any(r['counted'] for r in rows) and any(not r['counted'] for r in rows)
+    assert rec.cfg['drive']['trajectory_feedforward']
+    assert rec.cfg['sweep']['hold_s'] == .25
+    for r in rows:
+        assert max(r['peak_torque_fraction']) <= 1+1e-9
+        if r['counted']:
+            assert r['max_tracking_error_deg'] <= 2 and max(np.abs(r['final_speed_deg_s'])) <= 5
+    cases = part_cases(folder, 'l3', all_extremes=True)
+    assert max(c['residual_n'] for c in cases) < 1e-8
+    assert max(c['moment_residual_nm'] for c in cases) < 1e-8
+    assert (folder/'fea_setup_l3.csv').exists()
+    reasons = (folder/'fea_setup_l3.csv').read_text()
+    assert 'min Fx_N' in reasons and 'max Fx_N' in reasons
+    # Replay uses the saved feedforward controller and shortened hold/settle.
+    first = next(r for r in rows if r['counted'])
+    replay = run_sweep(build_arm(rec.cfg), first['a_deg'], first['b_deg'], first['duration_s'])
+    np.testing.assert_allclose(replay['maximum'], first['maximum'], rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.parametrize('kwargs', [dict(include_failed=True), dict(max_overlap_mm=None), dict(iterations=1), dict(search_steps=1)])
+def test_aggressive_search_rejects_unsafe_or_incomplete_settings(tmp_path, kwargs):
+    args = dict(samples=16, iterations=0, aggressive=True)
+    args.update(kwargs)
+    with pytest.raises(ValueError):
+        campaign(quick_config(), tmp_path, **args)

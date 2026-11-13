@@ -34,7 +34,7 @@ def unit_balls(p):
 
 
 class Statics:
-    """Part mate and delta loads at rest (zero velocity and acceleration), optionally with a blocking or clamping load."""
+    """Part mate loads at rest (zero velocity and acceleration), optionally with a blocking or clamping load."""
     def __init__(self, arm, derating=1., max_overlap_mm=0., min_lever_m=MIN_LEVER_M, contacts='tip', max_force_n=None,
                  max_moment_nm=None):
         self.m, self.d = arm.model, mujoco.MjData(arm.model)

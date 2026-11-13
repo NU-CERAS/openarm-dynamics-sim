@@ -12,6 +12,11 @@ def smooth_move(a, b, t, duration):
     return a + (b-a)*s, (b-a)*ds
 
 
+def smooth_acceleration(a, b, t, duration):
+    u = np.clip(t/duration, 0, 1)
+    return (b-a)*(60*u-180*u*u+120*u*u*u)/(duration*duration)
+
+
 def rating(c, name):
     return np.array([c['motors'][j['motor']][name] for j in c['joints']])
 
@@ -26,13 +31,21 @@ def torque_limit(c, qvel, rated=False):
     return limit
 
 
-def control(arm, d, target, velocity=None):
+def control(arm, d, target, velocity=None, acceleration=None):
     """Output-side position PD + optional gravity feedforward, all force-limited."""
     m, c = arm.model, arm.cfg
     velocity = np.zeros(m.nv) if velocity is None else velocity
     # Compute gravity at the current position with zero velocity on separate data.
     # qfrc_applied is never used: compensation consumes the same motor torque budget.
-    if c['drive']['gravity_compensation']:
+    if c['drive'].get('trajectory_feedforward', False):
+        if not hasattr(arm, '_inverse_data'):
+            arm._inverse_data = mujoco.MjData(m)
+        inverse = arm._inverse_data
+        inverse.qpos[:], inverse.qvel[:] = d.qpos, d.qvel
+        inverse.qacc[:] = np.zeros(m.nv) if acceleration is None else acceleration
+        mujoco.mj_inverse(m, inverse)
+        gravity = inverse.qfrc_inverse.copy()  # Inertial + velocity + gravity demand, inside actuator caps.
+    elif c['drive']['gravity_compensation']:
         if not hasattr(arm, '_gravity_data'):
             arm._gravity_data = mujoco.MjData(m)
         gd = arm._gravity_data
@@ -51,8 +64,8 @@ def control(arm, d, target, velocity=None):
     return cap
 
 
-def step(arm, d, target, velocity=None, recorder=None, phase='jog'):
-    cap = control(arm, d, target, velocity)
+def step(arm, d, target, velocity=None, recorder=None, phase='jog', acceleration=None):
+    cap = control(arm, d, target, velocity, acceleration)
     # Log all quantities at the same PRE-step timestamp. mj_step's acceleration/
     # torque fields otherwise describe the old state but qpos describes the new one.
     mujoco.mj_forward(arm.model, d)
@@ -97,8 +110,10 @@ class Sweep:
         if t + 1e-9 >= self.end:
             self.complete = True
             return False
+        acceleration = np.zeros_like(self.a)
         if t < s['approach_s']:
             q, v = smooth_move(self.start_q, self.a, t, s['approach_s'])
+            acceleration = smooth_acceleration(self.start_q, self.a, t, s['approach_s'])
             phase = 'approach'
         elif t + 1e-9 < self.sweep_start:
             q, v, phase = self.a, np.zeros_like(self.a), 'settle'
@@ -110,10 +125,11 @@ class Sweep:
                     self.reason = f'Could not reach {self.start_name}: {err:.2f} deg error. Sweep not executed.'
                     return False
             q, v = smooth_move(self.a, self.b, t-self.sweep_start, s['duration_s'])
+            acceleration = smooth_acceleration(self.a, self.b, t-self.sweep_start, s['duration_s'])
             phase = 'sweep'
         else:
             q, v, phase = self.b, np.zeros_like(self.b), 'hold'
-        row = step(arm, data, q, v, recorder=recorder, phase=self.direction+': '+phase)
+        row = step(arm, data, q, v, recorder=recorder, phase=self.direction+': '+phase, acceleration=acceleration)
         row['time_s'] = t
         row['phase'] = phase
         self.rows.append(row)

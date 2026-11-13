@@ -37,7 +37,7 @@ def capture_direct(arm, data):
 
 
 def assert_body_balance(rec, sample):
-    """Newton-Euler on every reported part from its mate rows; each delta row is their sum."""
+    """Newton-Euler on every reported part from its individual connection loads."""
     m = rec.model
     loads, points = sample['loads_local'], sample['application_points_local_m']
     for part in rec.parts():
@@ -47,21 +47,13 @@ def assert_body_balance(rec, sample):
         mass = m.body_mass[ids]
         com = mass@sample['com_world_m'][[b-1 for b in ids]]/mass.sum() if mass.sum() else origin
         rows = [(i, x) for i, x in enumerate(rec.interfaces) if x['body_id'] == root]
-        proximal = origin + R@points[rows[0][0]]
-        force, moment, about, rate, spin = (np.zeros(3) for _ in range(5))
+        force, moment, rate, spin = (np.zeros(3) for _ in range(4))
         for i, x in rows:
-            if x['kind'] == 'mate':
-                f = R@loads[i,:3]
-                p = origin + R@points[i]
-                force += f
-                moment += R@loads[i,3:] + np.cross(p-com, f)
-                about += R@loads[i,3:] + np.cross(p-proximal, f)
-        assert [x['kind'] for _, x in rows].count('delta') == (len(rows) > 1 and mass.sum() > 0)
-        for i, x in rows:
-            if x['kind'] == 'delta':
-                np.testing.assert_allclose(R@loads[i,:3], force, atol=1e-9)
-                np.testing.assert_allclose(R@loads[i,3:], about, atol=1e-9)
-                np.testing.assert_allclose(origin + R@points[i], proximal, atol=1e-12)
+            assert x['kind'] == 'mate'
+            f = R@loads[i,:3]
+            p = origin + R@points[i]
+            force += f
+            moment += R@loads[i,3:] + np.cross(p-com, f)
         for b in ids:
             Rb, c = sample['body_rotation_world'][b-1], sample['com_world_m'][b-1]
             external = sample['external_resultant_at_com_local'][b-1]
@@ -92,7 +84,7 @@ def test_static_weight_bending_and_frame_transform():
 
 RIGHT = ROOT/'robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml'
 @pytest.mark.parametrize('path', [DEFAULT_CONFIG, ROOT/'robots/moving_asm/urdf/moving_asm.sim.yaml', RIGHT])
-def test_dynamic_balance_every_part_and_delta(path):
+def test_dynamic_balance_every_part(path):
     imported = 'moving_asm' in str(path)
     arm = build_arm(load_config(path))
     d = arm.data()
@@ -122,8 +114,9 @@ def test_actuators_get_no_rows_and_jointless_structure_merges():
     assert not any(x['part'].startswith('rs') for x in rec.interfaces) and len(set(labels)) == len(labels)
     parts = {p['name']: p for p in rec.parts()}
     assert list(parts) == ['body_1', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'base']
-    # A link keeps both actuator mates and gains their delta; the tool is one solid with one mate.
-    assert [l for l in labels if l.startswith('l2 ')] == ['l2 <- rs03output', 'l2 <- rs06_1', 'l2 delta']
+    # A link keeps both actuator mates; the tool is one solid with one mate.
+    assert [l for l in labels if l.startswith('l2 ')] == ['l2 <- rs03output', 'l2 <- rs06_1']
+    assert all(x['kind'] == 'mate' for x in rec.interfaces)
     assert [l for l in labels if l.startswith(('base', 'screwon', 'drumstick'))] == ['base <- rs00_2']
     tool, m = parts['base'], rec.model
     assert tool['bodies'] == ['base', 'screwon', 'drumstick']
@@ -135,7 +128,8 @@ def test_actuators_get_no_rows_and_jointless_structure_merges():
     assert json.loads(json.dumps(rec.metadata()))['excluded_bodies'] == [n for n in rec.names.values() if n.startswith('rs')]
     # Without the key every body is a part, so both views of a link-to-link mate are reported.
     plain = [x['label'] for x in recording(load_config()).interfaces]
-    assert {'link2 <- link1', 'link1 <- link2', 'link1 delta', 'link7 <- link6'} <= set(plain) and 'link7 delta' not in plain
+    assert {'link2 <- link1', 'link1 <- link2', 'link7 <- link6'} <= set(plain)
+    assert len(plain) == 15  # Base mount and both sides of each of seven joints.
     for bad in ('rs*', [''], [3]):
         with pytest.raises(ValueError, match='exclude_bodies'):
             validate(load_config() | dict(fea=dict(exclude_bodies=bad)))
@@ -143,29 +137,27 @@ def test_actuators_get_no_rows_and_jointless_structure_merges():
         recording(load_config() | dict(fea=dict(exclude_bodies=['*'])))
 
 
-def test_static_delta_is_minus_the_part_weight_about_its_proximal_mate():
+def test_static_connections_balance_the_part_weight():
     s = Statics(build_arm(load_config(RIGHT)))
     assert s.evaluate(np.deg2rad([20, 40, -30, 60, 10, -40, 25])) is not None
     loads, points = s.rec.interface_loads(s.m, s.d)
     R, g = s.d.xmat.reshape(-1, 3, 3), s.m.opt.gravity
-    deltas = 0
     for part in s.rec.parts():
         root = part['body_id']
         ids = [b for b, r in s.rec.part_of.items() if r == root]
         weight = part['mass_kg']*g
         rows = [i for i, x in enumerate(s.rec.interfaces) if x['body_id'] == root]
-        # One mate: it alone carries the weight, so no separate delta row. Nor for the massless base frame.
-        i = rows[-1]
-        assert s.rec.interfaces[i]['kind'] == ('delta' if len(rows) > 1 and part['mass_kg'] else 'mate')
-        if len(rows) > 1 and not part['mass_kg']:
-            continue
+        assert all(s.rec.interfaces[i]['kind'] == 'mate' for i in rows)
         com = s.m.body_mass[ids]@s.d.xipos[ids]/part['mass_kg'] if part['mass_kg'] else s.d.xpos[root]
         np.testing.assert_allclose(R[root].T@(com-s.d.xpos[root]), part['com_local_m'], atol=1e-12)
-        point = s.d.xpos[root] + R[root]@points[i]
-        np.testing.assert_allclose(R[root]@loads[i, :3], -weight, atol=1e-9)
-        np.testing.assert_allclose(R[root]@loads[i, 3:], -np.cross(com-point, weight), atol=1e-9)
-        deltas += len(rows) > 1
-    assert deltas == 6
+        force, moment = np.zeros(3), np.zeros(3)
+        for i in rows:
+            f = R[root]@loads[i, :3]
+            point = s.d.xpos[root] + R[root]@points[i]
+            force += f
+            moment += R[root]@loads[i, 3:] + np.cross(point-com, f)
+        np.testing.assert_allclose(force, -weight, atol=1e-9)
+        np.testing.assert_allclose(moment, 0, atol=1e-9)
 
 
 def test_external_resultant_included_once():

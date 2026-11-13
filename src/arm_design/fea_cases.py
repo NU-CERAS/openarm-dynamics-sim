@@ -13,6 +13,10 @@ COMPONENTS = METRICS[:6]
 def exports(folder):
     """The load-case export folders in a campaign fea-*, bounds-*, or bounds-*/<kind> path."""
     folder = Path(folder).expanduser().resolve()
+    if (folder/'run.json').exists():
+        export = json.loads((folder/'run.json').read_text()).get('export')
+        if export:
+            return exports(export)
     if (folder/'peaks.csv').exists():
         return [folder]
     found = sorted(p.parent for p in folder.glob('*/peaks.csv'))
@@ -21,7 +25,7 @@ def exports(folder):
     return found
 
 
-def part_cases(folder, part, fixed=None, all_extremes=False):
+def part_cases(folder, part, fixed=None, all_extremes=False, selected_samples=None):
     """Setups for every selected load case of one part in one export folder."""
     meta = json.loads((folder/'metadata.json').read_text())
     if 'parts' not in meta:
@@ -33,13 +37,12 @@ def part_cases(folder, part, fixed=None, all_extremes=False):
     names = {b['body_id']: b['name'] for b in meta['bodies']} | {0: 'world'}
     rows_of = [(i, f) for i, f in enumerate(meta['interfaces']) if f['body_id'] == body['body_id']]
     mates = [(i, f) for i, f in rows_of if f['kind'] == 'mate']
-    delta = next((i for i, f in rows_of if f['kind'] == 'delta'), None)
     others = [names[f['other_body_id']] for _, f in mates]
     # Fix the proximal side (toward the base) unless told otherwise.
     fixed = fixed or others[0]
     if fixed not in others:
         raise ValueError(f'{part} connects to {", ".join(others)}; cannot fix {fixed!r}.')
-    labels = {f['label'] for _, f in rows_of}
+    labels = {f['label'] for _, f in mates}
     metrics = METRICS if all_extremes else ('force_N', 'moment_Nm')
     reasons = {}
     with (folder/'peaks.csv').open() as f:
@@ -51,6 +54,8 @@ def part_cases(folder, part, fixed=None, all_extremes=False):
                 value = float(peak['maximum' if side == 'max' else 'minimum'])
                 reasons.setdefault(int(peak[side+'_sample']), []).append(
                     f"{side} {peak['metric']} {value:.4g} at {peak['interface']}")
+    if selected_samples is not None:
+        reasons = {int(i): ['Selected snapshot'] for i in selected_samples}
     samples = {s['sample_index']: s for s in json.loads((folder/'load_cases.json').read_text())['samples']}
     gravity_world = np.array(meta['gravity_world_m_s2'])
     k = body['body_id']-1
@@ -78,21 +83,33 @@ def part_cases(folder, part, fixed=None, all_extremes=False):
                 contact['moment'] = R.T@np.array(s['contact_moment_on_arm_world_Nm'])
             external = contact['force']
         else:
-            # Each member's resultant is in its own frame; sum them in the part frame.
-            external = R.T@sum(np.array(s['body_rotation_world'][b])@np.array(s['external_resultant_at_com_local'][b][:3])
-                               for b, _, _ in members)
-            if np.linalg.norm(external) > 1e-9:
-                contact = dict(point=np.array(body['com_local_m']), force=external, at_com=True)
+            # Combine both force AND moment about the merged part COM.
+            external, external_moment = np.zeros(3), np.zeros(3)
+            com = np.array(body['com_local_m'])
+            for b, _, _ in members:
+                Rb = R.T@np.array(s['body_rotation_world'][b])
+                ext = np.array(s['external_resultant_at_com_local'][b])
+                f = Rb@ext[:3]
+                p = R.T@(np.array(s['com_world_m'][b])-origin)
+                external += f
+                external_moment += Rb@ext[3:] + np.cross(p-com, f)
+            if np.linalg.norm(external) > 1e-9 or np.linalg.norm(external_moment) > 1e-9:
+                contact = dict(point=com, force=external, moment=external_moment, at_com=True)
         # Newton on the rigid part: connections + external + weight = m a.
         residual = sum(r['load'][:3] for r in rows) + external + mass*(gravity-acceleration)
+        com = np.array(body['com_local_m'])
+        moment = sum((r['load'][3:] + np.cross(r['point']-com, r['load'][:3]) for r in rows), np.zeros(3))
+        if contact:
+            moment += contact.get('moment', np.zeros(3)) + np.cross(contact['point']-com, contact['force'])
+        inertia = np.array(body['inertia_com_local_kg_m2'])
+        moment -= inertia@angular_acceleration + np.cross(angular_velocity, inertia@angular_velocity)
         result.append(dict(sample=index, phase=s['phase'], reasons=reasons[index], fixed=fixed,
                            applied=[r for r in rows if r['other'] != fixed],
                            reaction=next(r for r in rows if r['other'] == fixed),
-                           delta=None if delta is None else dict(other=others[0], point=points[delta], load=loads[delta]),
                            bodies=body['bodies'], mass_kg=mass, com_m=np.array(body['com_local_m']),
                            gravity=gravity, acceleration=acceleration, effective_acceleration=gravity-acceleration,
                            angular_velocity=angular_velocity, angular_acceleration=angular_acceleration,
-                           contact=contact, residual_n=float(np.linalg.norm(residual))))
+                           contact=contact, residual_n=float(np.linalg.norm(residual)), moment_residual_nm=float(np.linalg.norm(moment))))
     return result
 
 
@@ -117,15 +134,12 @@ def report(folder, part, cases):
             moment = c['contact'].get('moment', np.zeros(3))
             lines.append(f"  APPLY contact {'load' if np.any(moment) else 'force'} {where} {vec(c['contact']['point'])}: "
                          f"F {vec(c['contact']['force'])}" + (f", M {vec(moment)}" if np.any(moment) else ''))
-        if c['delta']:
-            lines.append(f"  DELTA (sum of mate loads about the {c['delta']['other']} mate; do not apply, body loads carry it): "
-                         f"F {vec(c['delta']['load'][:3])}, M {vec(c['delta']['load'][3:])}")
         lines.append(f"  BODY: mass {c['mass_kg']:.4g} kg, COM {vec(c['com_m'])}; acceleration field (gravity - COM acceleration) "
                      f"{vec(c['effective_acceleration'])} m/s^2")
         if np.linalg.norm(c['angular_velocity']) > 1e-9 or np.linalg.norm(c['angular_acceleration']) > 1e-9:
             lines.append(f"        angular velocity {vec(c['angular_velocity'])} rad/s, "
                          f"angular acceleration {vec(c['angular_acceleration'])} rad/s^2")
-        lines.append(f"  Force balance residual: {c['residual_n']:.2e} N")
+        lines.append(f"  Balance residual: {c['residual_n']:.2e} N / {c['moment_residual_nm']:.2e} Nm")
     return '\n'.join(lines)
 
 
@@ -133,10 +147,13 @@ def write_csv(path, cases):
     with Path(path).open('w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['sample', 'phase', 'selected_for', 'role', 'from', 'point_x_m', 'point_y_m', 'point_z_m',
-                         *COMPONENTS, 'accel_x_m_s2', 'accel_y_m_s2', 'accel_z_m_s2', 'mass_kg'])
+                         *COMPONENTS, 'accel_x_m_s2', 'accel_y_m_s2', 'accel_z_m_s2', 'mass_kg',
+                         'omega_x_rad_s', 'omega_y_rad_s', 'omega_z_rad_s',
+                         'alpha_x_rad_s2', 'alpha_y_rad_s2', 'alpha_z_rad_s2', 'force_residual_N', 'moment_residual_Nm'])
         for c in cases:
             common = [c['sample'], c['phase'], '; '.join(c['reasons'])]
-            body = [*c['effective_acceleration'], c['mass_kg']]
+            body = [*c['effective_acceleration'], c['mass_kg'], *c['angular_velocity'], *c['angular_acceleration'],
+                    c['residual_n'], c['moment_residual_nm']]
             writer.writerow(common+['fixed (reaction check)', c['fixed'], *c['reaction']['point'],
                                     *c['reaction']['load'], *body])
             for r in c['applied']:

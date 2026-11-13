@@ -83,14 +83,7 @@ is never merged into; the mate to it is the base reaction.
 
 Each part has one row per mate, a wrench `[Fx, Fy, Fz, Mx, My, Mz]` acting ON the part
 at the mate point: first its proximal mate (toward the base), then its distal ones.
-A `<part> delta` row follows: the sum of all the part's mate wrenches, with moments
-taken about the proximal mate point, in the part frame. It is the load entering at one
-mate that is not passed on at the other. By Newton-Euler it equals `m (a_COM - g)` plus
-the rotational inertia terms, minus any external (contact) load on the part, so at
-rest its force is minus the part's weight. It is a result to read, not a load to apply:
-body loads already account for it. A part with a single mate (the merged tool) has no
-delta row because it would repeat that mate, and a massless frame (the import's base
-wrapper) has none because it is zero. Where two parts mate directly with no actuator
+Where two parts mate directly with no actuator
 between them, as in the built-in generated arm, each part has its own row for that mate.
 The campaign refines the force and moment magnitude of every row and logs the full
 wrench of each record-setting sample (see `convergence.csv`).
@@ -112,3 +105,43 @@ as their destination, with the same preparation, trajectory and hold behavior.
 
 No structural stress, deflection, fatigue, thermal, firmware, or hardware-control
 prediction is implied by the joint torque measurements or FEA load exports.
+
+
+## Dynamic restrained-hand enumeration
+
+`restrained` is distinct from static `bounds clamped`: a six-dimensional site weld fixes
+the initial hand transform to world while allowing the arm's internal freedom to move.
+Each independent trial ramps one combination of direct actuator torques from rest; no
+position PD or gravity compensation is applied. Full output-shaft peak ratings and the
+configured speed envelope bound torque. The numerical weld uses solimp 0.999/0.9999,
+torquescale 1 m and configurable solref time constant (default 0.005 s, damping ratio 1).
+It represents neither measured compliance nor a force/moment slip threshold. Reactions
+are extracted through RNE and exported at the tip, including the independent moment.
+
+Trial duration, ramp and solver parameters must be recorded and varied for sensitivity
+studies. Excess weld drift, detected self/floor collision, joint-limit contact and
+instability reject a trial. Accepted peaks do not include joint-stop impacts. Rejected
+prefixes are retained for diagnosis. Arbitrary torque combinations are integrated,
+not falsely declared static equilibrium. Each sampled pose defines its own fixed grasp;
+no common-grasp inverse-kinematics search or extra elbow fixture is implied.
+
+Campaigns now seed exclusively random sweeps. Exact full-step histogram counts are
+retained separately for random/refinement and accepted/rejected trials. Time weighting
+and one-peak-per-trial weighting answer different questions; neither identifies a real
+operating duty cycle without representative input motion probabilities. Force and moment
+components are part-local and snapshots remain simultaneous for FEA.
+
+
+Aggressive free-motion campaigns optionally enable `drive.trajectory_feedforward`:
+MuJoCo inverse dynamics computes the acceleration/velocity/gravity feedforward
+at the actual joint state and the quintic reference acceleration. That demand and
+PD feedback pass through the same actuator torque caps; `qfrc_applied` stays zero.
+This tests a model-based controller with exact model knowledge, not measured hardware
+tracking performance. The ordinary controller remains gravity-feedforward PD.
+Duration search does not alter motor ratings or prove global time optimality. Both
+motion directions start independently at rest; joint-stop/collision loads are excluded.
+
+Aggressive screening uses at most a 0.5 ms timestep. Record-setting sweeps are rerun
+at 0.25 ms and 0.125 ms (or finer if the initial step was already smaller), with
+acceptance and peak changes saved separately. Finite-step screening values are not
+silently replaced by reruns; inspect `timestep-validation.json` for final design use.

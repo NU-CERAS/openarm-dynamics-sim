@@ -9,7 +9,7 @@ from .fea import METRICS
 
 # One hue per part (fixed order); the row kind picks the line style.
 PALETTE = ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948')
-STYLES = dict(proximal='-', distal='--', delta=':')
+STYLES = dict(proximal='-', distal='--')
 
 
 def find(path):
@@ -56,8 +56,10 @@ def series(head):
     at = {c: k for k, c in enumerate(cols)}
     result, parts = [], {}
     for label in dict.fromkeys(c.split('|')[0] for c in cols):
-        part = label.removesuffix(' delta').split(' <- ')[0]
-        kind = 'delta' if label.endswith(' delta') else 'distal' if part in parts else 'proximal'
+        if label.endswith(' delta'):  # Older campaign files included aggregate rows.
+            continue
+        part = label.split(' <- ')[0]
+        kind = 'distal' if part in parts else 'proximal'
         row = dict(label=label, part=parts.setdefault(part, len(parts)), kind=kind)
         for metric in METRICS[6:]:
             state = [at.get(f'{label}|{metric}|{c}') for c in METRICS[:6]]
@@ -80,7 +82,7 @@ def table(ax, rows, loads, metric):
                  fontsize=9, loc='left')
     for k, name in enumerate((f'peak {unit}', *(c.split('_')[0] for c in METRICS[:6]))):
         ax.text(x[k], 0, name, ha='right', va='center', fontsize=size, weight='bold')
-    ax.text(.06, 0, 'mate / delta', va='center', fontsize=size, weight='bold')
+    ax.text(.06, 0, 'connection', va='center', fontsize=size, weight='bold')
     for r, row in enumerate(rows, 1):
         if r % 2:
             ax.axhspan(r-.5, r+.5, color='#000000', alpha=.05, lw=0)
@@ -99,8 +101,8 @@ def figure():
     from matplotlib.lines import Line2D
     fig = plt.figure(figsize=(17, 9.5))
     fig.legend([Line2D([], [], color='.3', ls=ls) for ls in STYLES.values()],
-               ['proximal mate (toward the base)', 'distal mate', 'delta (sum of mates about the proximal one)'],
-               loc='lower right', ncols=3, fontsize=8, frameon=False, title='One colour per part; line style:', title_fontsize=8)
+               ['proximal mate (toward the base)', 'distal mate'],
+               loc='lower right', ncols=2, fontsize=8, frameon=False, title='One colour per part; line style:', title_fontsize=8)
     grid = fig.add_gridspec(1, 2, width_ratios=(9, 10), left=.05, right=.99, top=.95, bottom=.06, wspace=.06)
     left, right = grid[0].subgridspec(3, 1, height_ratios=(3, 3, 2), hspace=.12), grid[1].subgridspec(2, 1, hspace=.1)
     axes = [fig.add_subplot(left[0])]

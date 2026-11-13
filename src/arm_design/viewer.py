@@ -143,7 +143,7 @@ class Window:
             imgui.text_wrapped('No samples. Resume simulation during the next recording.')
             return
         imgui.text('Maximum observed loads')
-        imgui.text_wrapped('Forces in N; moments in Nm, in the part frame. Each mate is shown separately; delta is their sum about the proximal mate.')
+        imgui.text_wrapped('Forces in N; moments in Nm, in the part frame. Each connection is shown separately.')
         # Structural parts only, moving links first.
         primary = [int(i) for i in recording.model.jnt_bodyid]
         bodies = sorted(dict.fromkeys(x['body_id'] for x in recording.interfaces), key=lambda i: i not in primary)
@@ -158,7 +158,7 @@ class Window:
         self.fea_interface = min(self.fea_interface, len(interfaces)-1)
         imgui.set_next_item_width(245)
         _, self.fea_interface = imgui.combo('Connection', self.fea_interface,
-            [recording.names.get(recording.interfaces[i]['other_body_id'], 'delta (sum of mates)') for i in interfaces])
+            [recording.names[recording.interfaces[i]['other_body_id']] for i in interfaces])
         i = interfaces[self.fea_interface]
         if imgui.begin_table('FEA extrema', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
             for name in ('Load', 'Minimum', 'Maximum'):
@@ -239,7 +239,7 @@ class Window:
         peaks = [p for p in c['peaks'] if p['metric'] == metric]
         imgui.begin_disabled(e.busy)
         if imgui.begin_table('Campaign peaks', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
-            for column in ('Mate / delta', 'Minimum', 'Maximum'):
+            for column in ('Connection', 'Minimum', 'Maximum'):
                 imgui.table_setup_column(column)
             imgui.table_headers_row()
             for k, peak in enumerate(peaks):

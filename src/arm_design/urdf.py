@@ -276,6 +276,8 @@ def build_urdf_arm(c):
         peak = c['drive']['torque_derating'] * c['motors'][j['motor']]['peak_torque_nm']
         element(actuators, 'position', joint=j['name'], kp=j['kp_nm_rad'], kv=j['kd_nm_s_rad'],
                 ctrlrange=np.deg2rad(j['limits_deg']), forcerange=[-peak, peak], gear=1)
+    from .payload import attach_payload
+    attach_payload(root, c)
     xml = ET.tostring(root, encoding='unicode')
     model = mujoco.MjModel.from_xml_string(xml)
     return Arm(c, model, xml, np.array([]))

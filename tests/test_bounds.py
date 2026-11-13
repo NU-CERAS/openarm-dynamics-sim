@@ -134,13 +134,30 @@ def test_fea_setup_treats_the_merged_tool_as_one_part(tmp_path):
         cases = part_cases(folder/kind, 'base')
         assert cases
         for c in cases:
-            assert c['fixed'] == 'rs00_2' and c['applied'] == [] and c['delta'] is None
+            assert c['fixed'] == 'rs00_2' and c['applied'] == [] and 'delta' not in c
             assert c['bodies'] == ['base', 'screwon', 'drumstick'] and c['mass_kg'] == pytest.approx(mass)
             # The tip is on the drumstick: its contact loads the merged part.
             assert c['residual_n'] < 1e-9 and (c['contact'] is not None) == (kind == 'blocked')
         assert 'One solid part: base + screwon + drumstick' in report(folder/kind, 'base', cases)
     link = part_cases(folder/'blocked', 'l3')
-    assert all(c['delta'] is not None and c['residual_n'] < 1e-9 for c in link) and 'DELTA' in report(folder/'blocked', 'l3', link)
+    assert all('delta' not in c and c['residual_n'] < 1e-9 for c in link)
+    assert 'DELTA' not in report(folder/'blocked', 'l3', link)
+    # A legacy aggregate peak must not select an extra FEA case.
+    metadata_path = folder/'blocked'/'metadata.json'
+    metadata = json.loads(metadata_path.read_text())
+    body_id = next(p['body_id'] for p in metadata['parts'] if p['name'] == 'l3')
+    metadata['interfaces'].append(dict(body_id=body_id, kind='delta', label='l3 delta'))
+    metadata_path.write_text(json.dumps(metadata))
+    peaks_path = folder/'blocked'/'peaks.csv'
+    with peaks_path.open() as f:
+        reader = csv.DictReader(f)
+        fields, peaks = reader.fieldnames, list(reader)
+    peaks.append(dict(peaks[0], interface='l3 delta', metric='force_N', max_sample=999999))
+    with peaks_path.open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(peaks)
+    assert [c['sample'] for c in part_cases(folder/'blocked', 'l3')] == [c['sample'] for c in link]
     with pytest.raises(ValueError, match='No structural part'):
         part_cases(folder/'blocked', 'drumstick')
 

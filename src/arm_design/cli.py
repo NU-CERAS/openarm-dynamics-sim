@@ -5,7 +5,7 @@ from .config import DEFAULT_CONFIG, ROOT, load_config, validate
 
 def main():
     p=argparse.ArgumentParser(description='MuJoCo joint jogging and timed A/B sweeps')
-    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds','fea-cases','watch'])
+    p.add_argument('command',nargs='?',default='view',choices=['view','sweep','export','campaign','bounds','fea-cases','watch','restrained','dashboard','replay'])
     source=p.add_mutually_exclusive_group()
     source.add_argument('--config',type=Path,default=DEFAULT_CONFIG)
     source.add_argument('--urdf',type=Path,help='Import a fixed-base rotary robot; creates <robot>.sim.yaml beside the URDF')
@@ -15,11 +15,14 @@ def main():
     p.add_argument('--direction',choices=['a-to-b','b-to-a'],default='a-to-b',
                    help='Direction for headless sweeps (default: a-to-b)')
     p.add_argument('--samples',type=int,help='Campaign: random A/B sweeps (default 200). Bounds: random poses (default 2000)')
-    p.add_argument('--iterations',type=int,help='Refinement steps per part mate/delta force and moment (campaign default 20 sweeps, bounds 300 poses)')
+    p.add_argument('--iterations',type=int,help='Refinement steps per connection force and moment (campaign default 20 sweeps, bounds 300 poses)')
     p.add_argument('--min-duration',type=float,default=.1,help='Campaign: shortest A->B seconds (default 0.1)')
     p.add_argument('--max-duration',type=float,default=5.,help='Campaign: longest A->B seconds (default 5)')
     p.add_argument('--workers',type=int,help='Campaign: parallel processes (default: CPU count)')
     p.add_argument('--seed',type=int,default=0,help='Campaign: random seed')
+    p.add_argument('--aggressive', action='store_true', help='Campaign: search progressively faster random A/B moves in both directions; samples counts all attempts')
+    p.add_argument('--search-steps', type=int, default=8, help='Aggressive: duration attempts per direction (default 8)')
+    p.add_argument('--skip-timestep-validation', action='store_true', help='Campaign: skip additional finer-timestep reruns after the trial budget')
     p.add_argument('--include-failed',action='store_true',help='Campaign: also count sweeps that exceed tracking tolerance (joint-stop impacts)')
     p.add_argument('--max-overlap-mm',type=float,default=0.,help='Campaign: largest convex-hull overlap allowed before a pose counts as self-colliding (default 0)')
     p.add_argument('--allow-self-collision',action='store_true',help='Campaign/bounds: skip the self-collision check')
@@ -33,7 +36,40 @@ def main():
     p.add_argument('--part',help='fea-cases: the structural part to set up for FEA, e.g. part_3 (a merged part goes by its root body)')
     p.add_argument('--fixed',help='fea-cases: connection to constrain (default: the proximal one, toward the base)')
     p.add_argument('--all-extremes',action='store_true',help='fea-cases: include every Fx..Mz extreme, not just peak force/moment magnitudes')
+    p.add_argument('--full-history', action='store_true', help='Retain every physics-step load in per-trial traces; otherwise store a 400-point preview')
+    p.add_argument('--poses', type=int, default=3, help='Restrained: independent random clamp poses')
+    p.add_argument('--poses-file', type=Path, help='Restrained: JSON list of joint-angle lists in degrees')
+    p.add_argument('--trial-duration', type=float, default=.5, help='Restrained: seconds per torque combination')
+    p.add_argument('--torque-ramp', type=float, default=.05, help='Restrained: smooth ramp from zero torque, seconds')
+    p.add_argument('--clamp-time-constant', type=float, default=.005, help='Restrained: weld solver time constant, seconds')
+    p.add_argument('--clamp-position-tolerance', type=float, default=.005, help='Restrained: maximum weld drift, metres')
+    p.add_argument('--clamp-angle-tolerance', type=float, default=.05, help='Restrained: maximum weld drift, radians')
+    p.add_argument('--max-trials', type=int, help='Restrained: stop after this many combinations; result is explicitly partial')
+    p.add_argument('--port', type=int, default=8050, help='Dashboard: localhost port')
+    p.add_argument('--trial', type=int, default=0, help='Replay: campaign trial index')
     args=p.parse_args()
+    if args.command=='dashboard':
+        from .dashboard import serve
+        serve(args.results or args.out, args.port)
+        return
+    if args.command=='replay':
+        if args.results is None:
+            p.error('replay needs --results pointing to a campaign export.')
+        from .viewer import Window
+        from .campaign import load_results
+        import yaml, tempfile
+        result=load_results(args.results)
+        if not 0 <= args.trial < len(result['sweeps']):
+            p.error('Trial index outside campaign.')
+        # The original config snapshot supplies exact gains and mass settings.
+        with tempfile.TemporaryDirectory() as temp:
+            config=Path(temp)/'replay.yaml'
+            config.write_text(yaml.safe_dump(result['cfg']))
+            window=Window(config,args.out)
+            window.experiment.load_campaign(args.results)
+            window.experiment.replay_sweep(args.trial)
+            window.run()
+        return
     if args.command=='fea-cases':
         if args.results is None or args.part is None:
             p.error('fea-cases needs --results and --part.')
@@ -75,6 +111,19 @@ def main():
     if args.duration is not None:
         c['sweep']['duration_s']=args.duration
         validate(c)
+    if args.command=='restrained':
+        from .restrained import restrained
+        import json
+        try:
+            folder=restrained(c, args.out, poses=args.poses, seed=args.seed, workers=args.workers or 1,
+                duration=args.trial_duration, ramp=args.torque_ramp, time_constant=args.clamp_time_constant,
+                position_tolerance=args.clamp_position_tolerance, angle_tolerance=args.clamp_angle_tolerance,
+                poses_deg=json.loads(args.poses_file.read_text()) if args.poses_file else None,
+                full_history=args.full_history, max_trials=args.max_trials)
+        except (ValueError, RuntimeError, OSError) as exc:
+            p.error(str(exc))
+        print(folder)
+        return
     if args.command=='campaign':
         if args.duration is not None:
             p.error('For campaigns, use --min-duration and --max-duration.')
@@ -85,10 +134,14 @@ def main():
             (args.out/PROGRESS).unlink(missing_ok=True)
             subprocess.Popen([sys.executable,'-m','arm_design.cli','watch','--results',str(args.out/PROGRESS)])
         try:
-            folder,rec=campaign(c,args.out,200 if args.samples is None else args.samples,20 if args.iterations is None else args.iterations,(args.min_duration,args.max_duration),args.workers,args.seed,args.include_failed,
-                                None if args.allow_self_collision else args.max_overlap_mm)
+            folder,rec=campaign(c,args.out,(20000 if args.aggressive else 200) if args.samples is None else args.samples,(0 if args.aggressive else 20) if args.iterations is None else args.iterations,(args.min_duration,args.max_duration),args.workers,args.seed,args.include_failed,
+                                None if args.allow_self_collision else args.max_overlap_mm, full_history=args.full_history, aggressive=args.aggressive, search_steps=args.search_steps,
+                                timestep_validation=not args.skip_timestep_validation)
         except (ValueError,RuntimeError) as exc:
             p.error(str(exc))
+        if rec is None:
+            print(f'Cancelled: {folder}')
+            return
         st=rec.settings
         print(f'{st["counted"]} of {st["sweeps"]} sweeps counted (tracking within {st["tracking_tolerance_deg"]:g} deg)')
         if st['max_overlap_mm'] is not None:

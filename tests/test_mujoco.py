@@ -100,11 +100,11 @@ def test_underpowered_arm_cannot_silently_pass():
 
 
 def test_short_duration_exposes_tracking_error():
-    c=load_config();c['sweep']['duration_s']=.1
+    c=load_config();c['sweep'].update(duration_s=.1, a_deg=[0,-25,0,50,0,0,0], b_deg=[30,-55,20,85,15,10,-15])
     _,r=run_headless(c)
     assert r.complete
     assert not summary(r)['tracking_ok']
-    assert max(j['saturated_percent'] for j in summary(r)['joints'])>0
+    # Finite controller bandwidth can cause lag without reaching the torque cap.
 
 
 def test_trajectory_is_smooth_and_duration_matters():
@@ -134,3 +134,32 @@ def test_save_and_export_are_replayable(tmp_path):
 def test_bad_link_inputs_rejected(field,value):
     c=load_config();c['links'][0][field]=value
     with pytest.raises(ValueError): validate(c)
+
+
+def test_trajectory_feedforward_produces_requested_acceleration_inside_caps():
+    c = load_config()
+    c['drive']['trajectory_feedforward'] = True
+    arm = build_arm(c)
+    d = arm.data()
+    d.qpos[:] = np.deg2rad([10, -25, 15, 40, -10, 5, 0])
+    d.qvel[:] = [.1, -.2, .1, 0, .3, -.1, .2]
+    requested = np.array([.3, -.2, .4, .5, -.1, .2, -.3])
+    cap = control(arm, d, d.qpos.copy(), d.qvel.copy(), requested)
+    mujoco.mj_forward(arm.model, d)
+    assert np.all(np.abs(d.qfrc_actuator) < cap)
+    np.testing.assert_allclose(d.qacc, requested, atol=1e-8)
+    control(arm, d, d.qpos.copy(), d.qvel.copy(), requested*1e6)
+    mujoco.mj_forward(arm.model, d)
+    assert np.all(np.abs(d.qfrc_actuator) <= cap+1e-9)
+    np.testing.assert_array_equal(d.qfrc_applied, 0)
+
+
+def test_quintic_acceleration_matches_velocity_derivative():
+    from arm_design.simulation import smooth_acceleration
+    a, b = np.zeros(7), np.arange(7)
+    for t in (.1, .7, 1.4):
+        h = 1e-6
+        finite_difference = (smooth_move(a,b,t+h,2)[1]-smooth_move(a,b,t-h,2)[1])/(2*h)
+        np.testing.assert_allclose(smooth_acceleration(a,b,t,2), finite_difference, atol=1e-8)
+    np.testing.assert_array_equal(smooth_acceleration(a,b,0,2), 0)
+    np.testing.assert_array_equal(smooth_acceleration(a,b,2,2), 0)

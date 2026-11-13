@@ -65,22 +65,16 @@ class FEARecording:
                 self.part_of[body] = self.part_of[parent] if parent in self.part_of and not m.body_jntnum[body] else body
         if not self.part_of:
             raise ValueError('fea.exclude_bodies leaves no structural part to report.')
-        # Per part: its proximal mate (sign +1), its distal mates (sign -1), then a
-        # delta row summing them about the proximal mate point (omitted for one mate,
-        # where it would repeat it, and for massless frames, where it is zero).
+        # Per part: its proximal mate (sign +1), then its distal mates (sign -1).
         self.interfaces = []
         for root in dict.fromkeys(self.part_of.values()):
-            name, start = self.names[root], len(self.interfaces)
+            name = self.names[root]
             for child in self.body_ids:
                 parent = int(m.body_parentid[child])
                 for body, other, sign in ((child, parent, 1), (parent, child, -1)):
                     if self.part_of.get(body) == root and self.part_of.get(other) != root:
                         self.interfaces.append(dict(body_id=root, other_body_id=other, child_id=child, sign=sign,
                                                     kind='mate', part=name, label=f'{name} <- {self.names[other]}'))
-            mates = list(range(start, len(self.interfaces)))
-            if len(mates) > 1 and sum(m.body_mass[b] for b, r in self.part_of.items() if r == root):
-                self.interfaces.append(dict(body_id=root, other_body_id=None, child_id=None, sign=0,
-                                            kind='delta', part=name, mates=mates, label=f'{name} delta'))
         shape = (len(self.interfaces), len(METRICS))
         self.minimum = np.full(shape, np.inf)
         self.maximum = np.full(shape, -np.inf)
@@ -110,14 +104,6 @@ class FEARecording:
         rotations = d.xmat.reshape((-1, 3, 3))
         loads, points = np.zeros((len(self.interfaces), 6)), np.zeros((len(self.interfaces), 3))
         for i, interface in enumerate(self.interfaces):
-            if interface['kind'] == 'delta':
-                # Sum of the part's mate wrenches, moments moved to the proximal mate point.
-                k = interface['mates']
-                loads[i] = loads[k].sum(axis=0)
-                for j in k[1:]:
-                    loads[i, 3:] += cross(points[j]-points[k[0]], loads[j, :3])
-                points[i] = points[k[0]]
-                continue
             body, child = interface['body_id'], interface['child_id']
             # A hinge's anchor need not equal the child body origin.
             joint = int(m.body_jntadr[child])
@@ -223,10 +209,7 @@ class FEARecording:
             load_order=['Fx_N', 'Fy_N', 'Fz_N', 'Mx_Nm', 'My_Nm', 'Mz_Nm'],
             kinematics_order=['angular_xyz', 'linear_xyz'],
             convention='Mate rows: loads act ON the part (body_id is its root body) FROM other_body_id; moments are about the listed '
-                       'application point, the mate point. Delta rows (kind delta): the sum of all mate wrenches acting on the part, with '
-                       'moments about its proximal mate point (its first row, toward the base). The delta is the load entering at one mate '
-                       'that is not passed on at the others: it equals m*(a_COM - g) plus the rotational inertia terms, minus any external '
-                       'load on the part (static: minus the weight). A part with a single mate has no delta row (it would equal that mate), nor has a massless one (zero).',
+                       'application point, the mate point. Each connection is reported separately, with the proximal mate first.',
             external_loads='external_resultant_at_com_local includes contact/perturbation resultants, excludes gravity. Apply once; do not add duplicate contact loads.',
             inertia='com_acceleration_world is physical acceleration (gravity removed from RNE output). Use inertial body loads consistently for dynamic snapshots.',
             limitations=[
@@ -234,7 +217,6 @@ class FEARecording:
                 "Only structural parts are reported. Bodies matching fea.exclude_bodies (actuators) receive no rows; a part's mates with them are kept. "
                 'Structural bodies joined without a joint are one part, in its root body frame (see parts).',
                 'Where two parts mate directly, each has its own view of that mate; apply only the rows of the part being analysed.',
-                'Delta rows are not loads to apply: body loads (gravity, inertia) and external contact already balance them.',
                 'Contact resultants do not retain contact pressure distributions; map to actual contact surfaces in FEA.',
                 'Original generated model bodies aggregate structure, motor housings and any tool/payload. These are assembly loads, not isolated structural-part loads.',
                 'CAD face mapping, support selection, mesh validation and material properties must be supplied in the FEA tool.',
@@ -296,5 +278,5 @@ class FEARecording:
                 row = self.rows[index]
                 for i, interface in enumerate(self.interfaces):
                     writer.writerow([index, row['time_s'], row['phase'],
-                        interface['part'], self.names.get(interface['other_body_id'], 'delta'),
+                        interface['part'], self.names[interface['other_body_id']],
                         *row['application_points_local_m'][i], *row['loads_local'][i]])

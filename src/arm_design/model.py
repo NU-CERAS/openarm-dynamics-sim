@@ -142,5 +142,7 @@ def build_arm(c):
     sensors = element(root, 'sensor')
     for j in c['joints']:
         element(sensors, 'jointactuatorfrc', name=j['name']+'_torque_Nm', joint=j['name'])
+    from .payload import attach_payload
+    attach_payload(root, c)
     xml = ET.tostring(root, encoding='unicode')
     return Arm(c, mujoco.MjModel.from_xml_string(xml), xml, np.array(masses))
