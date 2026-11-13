@@ -233,7 +233,7 @@ class FEARecording:
             parts=self.parts(), excluded_bodies=[self.names[i] for i in sorted(self.excluded)],
             interfaces=self.interfaces, joints=[j['name'] for j in self.cfg['joints']])
 
-    def export(self, out, kind='all', name=None):
+    def export(self, out, kind='all', name=None, shared_model=None):
         if self.active:
             raise ValueError('Stop recording before exporting.')
         if not self.rows:
@@ -244,7 +244,11 @@ class FEARecording:
         folder.mkdir(parents=True)
         (folder/'metadata.json').write_text(json.dumps(self.metadata(), indent=2))
         (folder/'config.yaml').write_text(yaml.safe_dump(self.cfg, sort_keys=False))
-        mujoco.mj_saveModel(self.model, str(folder/'model.mjb'), None)
+        if shared_model is None:
+            mujoco.mj_saveModel(self.model, str(folder/'model.mjb'), None)
+        else:
+            # Same immutable run model, one physical copy; exports still open normally.
+            (folder/'model.mjb').hardlink_to(Path(shared_model).resolve())
         # Original source plus exact compiled model: later URDF edits cannot
         # change the mass properties or live gains in this recording.
         (folder/'source_model.xml').write_text(self.source_xml)

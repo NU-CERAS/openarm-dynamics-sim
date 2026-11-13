@@ -737,11 +737,39 @@ New runs create `campaign-*/` or `restrained-*/` directories with:
 - `trials.sqlite`: transactionally published trial index, inputs and rejection reasons.
 - `trials/<id>/distribution.npz`: exact counts in shared signed logarithmic bins,
   including explicit underflow/overflow, plus sums, sums of squares and extrema.
-- `trials/<id>/trace.npz`: preview of up to 400 time samples; `--full-history` stores
-  every recorded physics-step load, joint angle, torque and cap instead.
-- `trials/<id>/cases.json.gz`: complete simultaneous snapshots at component/magnitude
-  extrema, retained even for rejected trial prefixes for diagnosis.
+- `trials/<id>/trace.npz`: up to 120 sampled frames per accepted trial by default.
+  Preview loads, torques and caps use float32; times and poses use float64. Rejected
+  trials keep diagnostics, inputs, extrema and distributions, but no preview.
+- `trials/<id>/cases.json.gz`: exact simultaneous snapshots behind the **current global**
+  accepted component/magnitude extrema. Superseded snapshots are pruned; these files
+  do not contain every trial's extrema. All trials still retain exact extrema values.
+- `trials/<id>/detail/`: full histories and all trial extrema generated on request.
+  In the Viewer select a trial, click **Generate full recording**, wait for verification,
+  then click **Play trial**. This explicitly re-simulates that trial from the saved
+  compiled model/config and checks acceptance, sample counts, histogram counts and
+  floating statistics before publishing it. Original results are never overwritten.
+  Regeneration needs the original MuJoCo version and compatible controller/collision
+  assets; a mismatch is reported instead of silently substituting different results.
+- `--full-history` (Runner advanced setting **Save all full histories**) opts into the
+  previous archival behavior, including full traces and snapshots for rejected trials.
+  Compact storage is the default for new runs; existing runs are unchanged.
 - `fea-*/`: normal FEA export of global extrema from accepted trials, when any exist.
+  Its `model.mjb` is a hard link to the run model: one physical model copy per run.
+  Copying exports to another filesystem may expand hard links into separate copies.
+
+Compact storage changes saved previews and snapshot retention, not simulation,
+acceptance rules, all-sample histogram counts, sums, sums of squares or extrema.
+Preview peak labels explicitly indicate when the exact selected trial snapshot is
+not retained. Regeneration is also available without the dashboard:
+
+```bash
+.venv/bin/python -m arm_design.trial_recording results/campaign-TIMESTAMP 42
+```
+
+The retained snapshot count is bounded by twice the number of connections times
+eight metrics. Per-trial summaries/distributions and accepted previews still grow
+linearly with trial count; storage is not constant. Full recordings generated on
+request add storage for those selected trials.
 
 The **Simulated time** histogram uses every recorded fixed-timestep sample, not the
 preview trace. Mean/RMS are exact for those samples; P95 is reported as a bin interval.

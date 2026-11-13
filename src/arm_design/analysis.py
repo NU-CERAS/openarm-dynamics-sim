@@ -42,13 +42,13 @@ def distribution(rows, full_history=False):
     for i in range(v.shape[1]):
         for j in range(v.shape[2]):
             counts[i, j] = np.histogram(v[:, i, j], bins)[0]
-    take = np.arange(len(rows)) if full_history else np.unique(np.linspace(0, len(rows)-1, min(400, len(rows))).astype(int))
+    take = np.arange(len(rows)) if full_history else np.unique(np.linspace(0, len(rows)-1, min(120, len(rows))).astype(int))
     return dict(counts=counts, count=len(rows), total=v.sum(axis=0), squares=(v*v).sum(axis=0),
                 minimum=v.min(axis=0), maximum=v.max(axis=0),
-                trace=dict(time=np.array([rows[k]['time_s'] for k in take]), loads=loads[take],
+                trace=dict(time=np.array([rows[k]['time_s'] for k in take]), loads=loads[take].astype(np.float64 if full_history else np.float32),
                            q=np.array([rows[k]['q_rad'] for k in take]),
-                           torque=np.array([rows[k]['actuator_torque_Nm'] for k in take]),
-                           cap=np.array([rows[k]['torque_cap_Nm'] for k in take])),
+                           torque=np.array([rows[k]['actuator_torque_Nm'] for k in take], dtype=np.float64 if full_history else np.float32),
+                           cap=np.array([rows[k]['torque_cap_Nm'] for k in take], dtype=np.float64 if full_history else np.float32)),
                 full_history=full_history)
 
 
@@ -61,10 +61,37 @@ def result_from_recording(rec, **info):
                 extrema={int(i): rec.rows[i] for i in keep}, **info)
 
 
+class Peaks:
+    """Running per-row extrema across sweeps, keeping only the samples behind them."""
+    def __init__(self, shape):
+        self.minimum = np.full(shape, np.inf)
+        self.maximum = np.full(shape, -np.inf)
+        self.min_source = np.full(shape+(2,), -1)
+        self.max_source = np.full(shape+(2,), -1)
+        self.samples = {}
+
+    def add(self, sweep_id, result):
+        if not result['counted']:
+            return
+        for values, index, current, source, better in (
+                (result['minimum'], result['min_index'], self.minimum, self.min_source, np.less),
+                (result['maximum'], result['max_index'], self.maximum, self.max_source, np.greater)):
+            mask = better(values, current)
+            current[mask] = values[mask]
+            source[mask, 0] = sweep_id
+            source[mask, 1] = index[mask]
+        for sample_index, sample in result['extrema'].items():
+            self.samples[(sweep_id, sample_index)] = sample
+        used = {tuple(k) for k in np.concatenate((self.min_source, self.max_source)).reshape(-1, 2).tolist()}
+        self.samples = {k: v for k, v in self.samples.items() if k in used}
+
+
 class RunStore:
     def __init__(self, out, arm, scenario, settings):
         settings = dict(settings, analysis_payload=arm.cfg.get('analysis_payload', {'mass_kg':0}),
                         run_name=arm.cfg.get('analysis_run_name',''))
+        self.compact = not settings.get('full_history', False)
+        settings['storage_policy'] = 'compact_v1' if self.compact else 'full_v1'
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S-%fZ')
         self.path = Path(out).resolve()/f'{scenario}-{stamp}'
         (self.path/'trials').mkdir(parents=True)
@@ -83,6 +110,8 @@ class RunStore:
                           interfaces=self.meta['interfaces'], history=[])
         self.started = time.monotonic()
         self.maximum = None
+        self.peaks = Peaks((len(self.meta['interfaces']), 8))
+        self.retained = {}
         with sqlite3.connect(self.path/'trials.sqlite') as db:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE trials (id INTEGER PRIMARY KEY, stage TEXT, counted INTEGER, info TEXT)')
@@ -104,15 +133,24 @@ class RunStore:
         if stats is not None:
             np.savez_compressed(folder/'distribution.npz', edges=edges(),
                                 **{k: v for k, v in stats.items() if k not in ('trace', 'full_history')})
-            np.savez_compressed(folder/'trace.npz', **stats['trace'])
-        if result.get('extrema'):
+            if not self.compact or result['counted']:
+                trace = stats['trace']
+                if self.compact:
+                    take = np.unique(np.linspace(0, len(trace['time'])-1, min(120, len(trace['time']))).astype(int))
+                    trace = {k: v[take].astype(np.float32 if k in ('loads', 'torque', 'cap') else np.float64) for k, v in trace.items()}
+                np.savez_compressed(folder/'trace.npz', **trace)
+        if self.compact:
+            self._retain_extrema(trial_id, result)
+        elif result.get('extrema'):
             with gzip.open(folder/'cases.json.gz', 'wt') as f:
                 json.dump(list(result['extrema'].values()), f, default=jsonable)
         omitted = {'distribution', 'extrema', 'minimum', 'maximum', 'min_index', 'max_index'}
         info = {k: v for k, v in result.items() if k not in omitted}
         if result.get('maximum') is not None and result.get('extrema'):
             info.update(minimum=result['minimum'], maximum=result['maximum'])
-        info.update(id=trial_id, stage=stage, full_history=bool(stats and stats['full_history']))
+        info.update(id=trial_id, stage=stage, full_history=bool(not self.compact and stats and stats['full_history']),
+                    storage_policy=self.state['settings']['storage_policy'],
+                    preview_samples=min(120, len(stats['trace']['time'])) if self.compact and stats and result['counted'] else 0)
         atomic_json(folder/'trial.json', info)
         with sqlite3.connect(self.path/'trials.sqlite') as db:
             db.execute('INSERT INTO trials VALUES (?, ?, ?, ?)',
@@ -129,6 +167,27 @@ class RunStore:
         if len(self.state['history']) > 2000:
             self.state['history'] = self.state['history'][::2] + self.state['history'][-1:]
         self.publish()
+
+    def _retain_extrema(self, trial_id, result):
+        """Keep exact, unrounded snapshots only for current accepted global extrema."""
+        self.peaks.add(trial_id, result)
+        grouped = {}
+        for trial, index in self.peaks.samples:
+            grouped.setdefault(trial, set()).add(index)
+        # Write new winners before deleting superseded cases. Per-trial stats
+        # and diagnostics are immutable and remain available for every trial.
+        for trial, indices in grouped.items():
+            if indices == self.retained.get(trial):
+                continue
+            target = self.path/'trials'/str(trial)/'cases.json.gz'
+            tmp = target.with_suffix('.tmp')
+            with gzip.open(tmp, 'wt') as stream:
+                json.dump([self.peaks.samples[(trial, i)] for i in sorted(indices)], stream, default=jsonable)
+            tmp.replace(target)
+        for trial in self.retained.keys()-grouped.keys():
+            (self.path/'trials'/str(trial)/'cases.json.gz').unlink(missing_ok=True)
+        self.retained = grouped
+        self.state['retained_snapshots'] = len(self.peaks.samples)
 
     def finish(self, status='complete', export=None, error=None):
         self.state.update(status=status, export=str(export) if export else None, error=error)

@@ -86,3 +86,51 @@ def test_dashboard_selection_uses_trial_id_and_survives_live_refresh(recording):
     assert client.get('/assets/trial_playback.js').status_code == 200
     page = client.get('/').text
     assert 'src="/assets/vendor/' not in page  # ES modules are imported only on play.
+
+
+def test_compact_playback_labels_missing_exact_peak_and_reads_new_detail(recording):
+    path, _, _ = recording
+    folder = path/'trials/42'
+    (folder/'cases.json.gz').unlink()
+    info = json.loads((folder/'trial.json').read_text())
+    low, high = np.zeros((2,8)), np.zeros((2,8))
+    low[1,0], high[1,0] = -20, 3
+    info.update(minimum=low.tolist(),maximum=high.tolist(),storage_policy='compact_v1')
+    (folder/'trial.json').write_text(json.dumps(info))
+    preview = playback(str(path),42,'link',1,'Fx_N','minimum')
+    assert not preview['peak_exact'] and preview['peak_label'].startswith('Preview minimum')
+    detail = folder/'detail'; detail.mkdir()
+    loads = np.zeros((3,2,6)); loads[:,1,0] = [1,-20,3]
+    np.savez(detail/'trace.npz',time=[0,1,2],q=[[0],[.4],[.8]],loads=loads)
+    (detail/'recording.json').write_text(json.dumps(dict(status='complete',verified=True)))
+    replay = playback(str(path),42,'link',1,'Fx_N','minimum')
+    assert replay['full_history'] and replay['regenerated'] and replay['peak_exact']
+    assert replay['peak_label'].startswith('minimum')
+
+
+def test_dashboard_compact_default_and_recording_control(recording):
+    path, _, _ = recording
+    app = create_app(path)
+    client = app.server.test_client()
+    layout = client.get('/_dash-layout').json
+    def components(node):
+        if isinstance(node,dict):
+            yield node
+            for value in node.values():
+                yield from components(value)
+        elif isinstance(node,list):
+            for value in node:
+                yield from components(value)
+    by_id = {n['props']['id']: n['props'] for n in components(layout)
+             if isinstance(n.get('props',{}).get('id'),str)}
+    assert by_id['full']['value'] == []
+    assert by_id['detail-generate']['children'] == 'Generate full recording'
+    key = next(k for k in app.callback_map if k.startswith('..detail-status'))
+    response = client.post('/_dash-update-component',json=dict(output=key,
+        outputs=[dict(id='detail-status',property='children'),dict(id='detail-generate',property='disabled')],
+        inputs=[dict(id='detail-generate',property='n_clicks',value=0),
+                dict(id='refresh',property='n_intervals',value=0),
+                dict(id='replay-selection',property='data',value=dict(path=str(path),trial=42))],
+        changedPropIds=['replay-selection.data']))
+    assert response.status_code == 200
+    assert response.json['response']['detail-generate']['disabled'] is False

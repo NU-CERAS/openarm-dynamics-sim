@@ -18,7 +18,7 @@ from .fea import FEARecording, METRICS
 from .model import build_arm
 from .reporting import summary
 from .simulation import Sweep
-from .analysis import RunStore, distribution
+from .analysis import RunStore, distribution, Peaks
 from .live_preview import LivePublisher
 
 # Every reported connection is refined on both magnitudes.
@@ -286,31 +286,6 @@ def _refine(job):
     return results
 
 
-class Peaks:
-    """Running per-row extrema across sweeps, keeping only the samples behind them."""
-    def __init__(self, shape):
-        self.minimum = np.full(shape, np.inf)
-        self.maximum = np.full(shape, -np.inf)
-        self.min_source = np.full(shape+(2,), -1)
-        self.max_source = np.full(shape+(2,), -1)
-        self.samples = {}
-
-    def add(self, sweep_id, result):
-        if not result['counted']:
-            return
-        for values, index, current, source, better in (
-                (result['minimum'], result['min_index'], self.minimum, self.min_source, np.less),
-                (result['maximum'], result['max_index'], self.maximum, self.max_source, np.greater)):
-            mask = better(values, current)
-            current[mask] = values[mask]
-            source[mask, 0] = sweep_id
-            source[mask, 1] = index[mask]
-        for sample_index, sample in result['extrema'].items():
-            self.samples[(sweep_id, sample_index)] = sample
-        used = {tuple(k) for k in np.concatenate((self.min_source, self.max_source)).reshape(-1, 2).tolist()}
-        self.samples = {k: v for k, v in self.samples.items() if k in used}
-
-
 class CampaignRecording(FEARecording):
     """Extrema samples from many sweeps, exported in the normal FEA load-case format."""
     def __init__(self, arm, peaks, sweeps, settings):
@@ -545,7 +520,7 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
                     measured_phases=['sweep', 'hold'])
     try:
         rec = CampaignRecording(arm, peaks, sweeps, settings)
-        folder = rec.export(store.path, 'cases')
+        folder = rec.export(store.path, 'cases', shared_model=store.path/'model.mjb')
         with (folder/'sweeps.csv').open('w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['sweep', 'stage', 'duration_s', 'completed', 'tracking_ok', 'counted', 'max_tracking_error_deg',

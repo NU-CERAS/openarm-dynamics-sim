@@ -9,6 +9,7 @@ import mujoco
 import numpy as np
 
 from .fea import METRICS
+from .trial_recording import trace_path
 
 
 def visual_geoms(model):
@@ -59,9 +60,8 @@ def metric_value(load, metric):
     return float(load[j] if j < 6 else np.linalg.norm(load[:3] if j == 6 else load[3:]))
 
 
-@lru_cache(maxsize=8)
 def playback(path, trial_id, part, interface, metric, extreme):
-    """Bound the animation payload, but include the exact recorded selected peak.
+    """Bound the animation payload; include the exact selected peak when retained.
 
     The mesh uses compiled geom transforms (including mesh centering). Readouts
     and poses always come from the same recorded timestamp, without interpolation.
@@ -69,15 +69,17 @@ def playback(path, trial_id, part, interface, metric, extreme):
     path = Path(path)
     folder = path/'trials'/str(int(trial_id))
     model_path = path/'model.mjb'
-    if not model_path.exists() or not (folder/'trace.npz').exists():
-        raise ValueError('This trial has no saved model or motion history to play.')
+    trace_file = trace_path(path, trial_id)
+    regenerated = trace_file.parent.name == 'detail'
+    if not model_path.exists() or not trace_file.exists():
+        raise ValueError('This trial has no saved model or motion history to play. Generate a full recording to inspect it.')
     meta = json.loads((path/'metadata.json').read_text())
     info = json.loads((folder/'trial.json').read_text())
     mates = [(i, r) for i, r in enumerate(meta['interfaces'])
              if r.get('kind', 'mate') == 'mate' and (r.get('part') or r['label'].split(' <- ')[0]) == part]
     if interface not in [i for i, _ in mates]:
         raise ValueError('Choose a connection on the selected link.')
-    with np.load(folder/'trace.npz', allow_pickle=False) as trace:
+    with np.load(trace_file, allow_pickle=False) as trace:
         times, q, loads = trace['time'], trace['q'], trace['loads']
     if not len(times) or not all(np.isfinite(a).all() for a in (times, q, loads)):
         raise ValueError('This trial has no finite recorded motion to play.')
@@ -89,12 +91,20 @@ def playback(path, trial_id, part, interface, metric, extreme):
     values = np.array([score(load) for load in loads])
     peak_index = max(range(len(times)), key=lambda k: select(values[k]))
     peak = dict(time_s=float(times[peak_index]), q_rad=q[peak_index], loads_local=loads[peak_index])
-    cases_path = folder/'cases.json.gz'
+    exact_source = regenerated or bool(info.get('full_history'))
+    cases_path = trace_file.parent/'cases.json.gz'
     if cases_path.exists():
         with gzip.open(cases_path, 'rt') as stream:
             for case in json.load(stream):
-                if select(score(case['loads_local'])) > select(score(peak['loads_local'])):
+                value, best = select(score(case['loads_local'])), select(score(peak['loads_local']))
+                if value >= best - (0 if exact_source else 1e-6*max(1, abs(best))):
                     peak = case
+                    exact_source = True
+    j = METRICS.index(metric)
+    if 'minimum' in info and 'maximum' in info:
+        low, high = info['minimum'][interface][j], info['maximum'][interface][j]
+        expected = low if j < 6 and extreme == 'minimum' else (max((low, high), key=abs) if j < 6 and extreme == 'absolute' else high)
+        exact_source = exact_source and np.isclose(score(peak['loads_local']), expected, rtol=1e-10, atol=1e-10)
     # About 60 visual frames/s, bounded for long trials. Include endpoints and peak.
     count = min(len(times), 900, max(2, int(np.ceil((times[-1]-times[0])*60))+1))
     indices = np.unique(np.linspace(0, len(times)-1, count).astype(int))
@@ -122,6 +132,7 @@ def playback(path, trial_id, part, interface, metric, extreme):
                 mates=[r['label'] for _, r in mates], metric=metric,
                 selected_mate=[i for i, _ in mates].index(interface),
                 peak_index=ordered_times.index(float(peak['time_s'])),
-                peak_label=f'{kind} {metric.replace("_", " ")}: {score(peak["loads_local"]):+.6g}',
-                full_history=bool(info.get('full_history')), accepted=bool(info.get('counted')),
+                peak_exact=bool(exact_source), regenerated=regenerated,
+                peak_label=('' if exact_source else 'Preview ') + f'{kind} {metric.replace("_", " ")}: {score(peak["loads_local"]):+.6g}',
+                full_history=bool(regenerated or info.get('full_history')), accepted=bool(info.get('counted')),
                 reason=info.get('reason', ''), source_samples=len(times))

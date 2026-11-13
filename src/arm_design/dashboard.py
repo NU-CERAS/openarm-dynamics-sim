@@ -21,6 +21,7 @@ from .fea import METRICS
 from .fea_view import mesh_figure
 from .load_histograms import trial_extreme, histogram_counts, percentile_text, preview_svg, split_histogram
 from .trial_playback import playback, model_geometry
+from .trial_recording import trace_path, recording_status, start_recording
 from .dashboard_jobs import prepare, save_request, job_state, request_stop
 from .payload import default_payload_offset
 
@@ -388,11 +389,12 @@ def figures(path, other, interface, metric, stage, accepted, weighting, part=Non
 
 def snapshots(path, trial_id=None):
     if trial_id is not None:
-        p = Path(path)/'trials'/str(trial_id)/'cases.json.gz'
-        if p.exists():
+        p = trace_path(path, trial_id).parent/'cases.json.gz'
+        try:
             with gzip.open(p, 'rt') as f:
                 return json.load(f)
-        return []
+        except FileNotFoundError:
+            return []
     export = run_info(path).get('export')
     return read_json(Path(export)/'load_cases.json', {}).get('samples', []) if export else []
 
@@ -435,7 +437,8 @@ def run_controls(models):
             html.Label('Seed'),dcc.Input(id='seed',type='number',min=0,step=1,value=0,persistence=True),
             html.Label('Worker processes'),dcc.Input(id='workers',type='number',min=1,max=16,step=1,value=2,persistence=True),
             html.Div([html.Label('Optional restrained poses · degrees'),dcc.Textarea(id='poses',placeholder='[[0,0,0,0,0,0,0], ...]',persistence=True)],id='pose-list-control'),
-            dcc.Checklist(id='full',options=[{'label':'Save full histories for playback','value':'full'}],value=['full'],persistence=True),
+            html.P('Compact storage: all-sample statistics, up to 120 preview frames per accepted trial, and exact global extrema. Generate individual full recordings in the Viewer.',className='note'),
+            dcc.Checklist(id='full',options=[{'label':'Save all full histories (large files)','value':'full'}],value=[],persistence='compact-v1'),
         ]),
         ],id='runner-settings'),
         html.Div([html.Button('Start test',id='launch',className='primary'),
@@ -541,6 +544,8 @@ def create_app(root):
                     style_cell={'backgroundColor':'#101b29','color':'#cbd8e5','border':'1px solid #26394a','textAlign':'left','maxWidth':'360px','whiteSpace':'normal'}),
                 html.Div(id='trial-detail', className='note'),
                 html.Button('Play trial',id='replay-load',disabled=True,className='primary'),
+                html.Button('Generate full recording',id='detail-generate',disabled=True),
+                html.Div(id='detail-status',className='note'),
                 dcc.Store(id='replay-selection'), dcc.Store(id='replay-data'),
                 dcc.Loading(html.Div(id='replay-message',className='note'),type='dot'),
                 html.Div(id='trial-player'), html.Div(id='replay-ready',style={'display':'none'}),
@@ -656,7 +661,7 @@ def create_app(root):
     @app.callback(Output('runner-settings','disabled'),Output('model','disabled'),Output('motion-mode','disabled'),
                   Output('full','options'),Input('launch','disabled'))
     def lock_settings(active):
-        return active,active,active,[{'label':'Save full histories for playback','value':'full','disabled':bool(active)}]
+        return active,active,active,[{'label':'Save all full histories (large files)','value':'full','disabled':bool(active)}]
 
     @app.callback(*[Output(field,'value') for field in RUN_FIELDS],Output('runner-settings-key','data'),
                   Input('runner-scenario','value'),Input('launched-jobs','data'),State('runner-settings-key','data'))
@@ -700,10 +705,31 @@ def create_app(root):
         p = safe(path)
         trial_id = int(rows[selected[0]]['id'])
         interface = scoped_interface(run_info(p).get('interfaces', []), part, interface)
-        available = (p/'model.mjb').exists() and (p/'trials'/str(trial_id)/'trace.npz').exists() and interface is not None
+        available = (p/'model.mjb').exists() and (p/'trials'/str(trial_id)/'trial.json').exists() and interface is not None
         selection = dict(path=str(p),trial=trial_id,part=part,interface=interface,metric=metric,extreme=extreme,
                          available=available)
         return no_update if selection == previous else selection, not available
+
+    @app.callback(Output('detail-status','children'), Output('detail-generate','disabled'),
+                  Input('detail-generate','n_clicks'), Input('refresh','n_intervals'), Input('replay-selection','data'))
+    def full_recording(clicks, refresh, selection):
+        if not selection:
+            return 'Compact playback is a preview. Select a trial to generate its full recording.', True
+        path, trial = safe(selection['path']), int(selection['trial'])
+        info = run_info(path)
+        if info.get('status') == 'running':
+            return 'Full recordings can be generated after this run finishes.', True
+        saved = json.loads((path/'trials'/str(trial)/'trial.json').read_text())
+        status = recording_status(path, trial)
+        if saved.get('full_history') or status.get('status') == 'complete':
+            return 'Full recording available. Click Play trial to load it.', True
+        if status.get('status') == 'running':
+            return 'Generating and verifying a full recording…', True
+        if ctx.triggered_id == 'detail-generate':
+            return start_recording(path, trial), False
+        if status.get('status') == 'error':
+            return 'Full recording unavailable: '+status.get('error', 'Unknown error'), False
+        return 'Generate a full recording only when needed. This reruns and verifies the selected trial; original results stay unchanged.', False
 
     @app.callback(Output('replay-data','data'), Output('replay-message','children'),
                   Input('replay-load','n_clicks'), Input('replay-selection','data'))
@@ -885,14 +911,16 @@ def create_app(root):
             return f, ''
         detail = ''
         if r:
-            p = safe(path)/'trials'/str(r['id'])/'trace.npz'
+            p = trace_path(safe(path), r['id'])
             detail = json.dumps({k:r[k] for k in ('id','partial','max_tracking_error_deg','start_tracking_error_deg','final_speed_deg_s','diagnostics','measured_duration_s','pair_id','direction','search_step','search_role','reason','max_clamp_position_error_m','max_clamp_angle_error_rad') if k in r})
             if p.exists():
                 v = load_npz(str(p))
                 y = metrics(v['loads'])[:, int(interface or 0), METRICS.index(metric)]
                 f.add_scatter(x=v['time'], y=y, mode='lines', line_color=COLORS[0], name=run_info(path)['interfaces'][interface]['label'])
                 f.update_layout(xaxis_title='Time (s)', yaxis_title=metric,
-                                title='Full physics history' if r.get('full_history') else 'Preview history · up to 400 samples; peaks retained separately')
+                                title='Full physics history' if r.get('full_history') or p.parent.name == 'detail' else 'Preview history · exact extrema are in the table')
+            else:
+                f.update_layout(title='No preview saved · generate a full recording to inspect this trial')
         f.update_yaxes(zeroline=True, zerolinewidth=2, zerolinecolor='#e5edf5')
         return f, detail
 

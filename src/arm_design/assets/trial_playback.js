@@ -70,8 +70,10 @@
             const slider = element('input');
             slider.type = 'range'; slider.min = 0; slider.max = data.time.length - 1; slider.step = 1;
             slider.setAttribute('aria-label', 'Recorded trial timeline');
-            const description = (data.full_history ? 'Full history available. ' : 'Reduced history; unsaved motion samples are unavailable. ') +
-                'Playback shows ' + data.time.length + ' recorded poses, including this peak; loads match each displayed pose. ' +
+            const description = (data.full_history ? 'Full history available. ' : 'Compact preview; intermediate samples were not saved. ') +
+                'Playback shows ' + data.time.length + ' sampled poses; loads match each displayed pose. ' +
+                (data.peak_exact ? 'Selected peak is retained exactly. ' : 'Selected preview peak may underestimate the exact trial extreme. ') +
+                (data.regenerated ? 'This recording was regenerated and verified against the original statistics. ' : '') +
                 'XYZ loads act on the highlighted link in its local frame. Drag to rotate; scroll to zoom.';
             const note = element('p', description, 'note');
             if (!data.accepted) panel.append(element('p', 'Rejected trial · ' + (data.reason || 'Not included in accepted results'), 'replay-warning'));

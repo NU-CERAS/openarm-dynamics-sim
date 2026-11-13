@@ -228,7 +228,7 @@ def restrained(cfg, out, poses=3, seed=0, workers=1, duration=.5, ramp=.05,
         if peaks.samples:
             rec = RestrainedRecording(arm, peaks, summaries, settings)
             # This is an extrema recorder, not a replayable A/B campaign.
-            export = rec.export(store.path, 'cases')
+            export = rec.export(store.path, 'cases', shared_model=store.path/'model.mjb')
         status = 'cancelled' if store.cancelled else 'partial' if len(summaries) < expected else 'complete'
         store.finish(status, export)
         return store.path

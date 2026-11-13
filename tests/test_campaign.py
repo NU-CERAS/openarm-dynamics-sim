@@ -266,6 +266,9 @@ def test_motor_loads_allow_initial_sag():
 @pytest.mark.parametrize('policy', ['motor_loads_v1', 'motor_loads_v2'])
 @pytest.mark.parametrize('event', ['collision', 'joint_limit', 'overspeed', 'numerical'])
 def test_motor_load_prefix_excludes_event_sample(monkeypatch, event, policy):
+    # This compares consecutive physics samples, not the decimated playback preview.
+    from arm_design import campaign as campaign_module
+    monkeypatch.setattr(campaign_module, '_full_history', True)
     from arm_design import simulation
     c, a, b = motor_load_config()
     c['sweep'].update(load_acceptance=policy, tracking_tolerance_deg=5.)

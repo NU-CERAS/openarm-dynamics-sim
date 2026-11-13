@@ -36,7 +36,7 @@ def main():
     p.add_argument('--part',help='fea-cases: the structural part to set up for FEA, e.g. part_3 (a merged part goes by its root body)')
     p.add_argument('--fixed',help='fea-cases: connection to constrain (default: the proximal one, toward the base)')
     p.add_argument('--all-extremes',action='store_true',help='fea-cases: include every Fx..Mz extreme, not just peak force/moment magnitudes')
-    p.add_argument('--full-history', action='store_true', help='Retain every physics-step load in per-trial traces; otherwise store a 400-point preview')
+    p.add_argument('--full-history', action='store_true', help='Retain full traces and all trial extrema (large files); default keeps 120-frame accepted previews and global extrema')
     p.add_argument('--poses', type=int, default=3, help='Restrained: independent random clamp poses')
     p.add_argument('--poses-file', type=Path, help='Restrained: JSON list of joint-angle lists in degrees')
     p.add_argument('--trial-duration', type=float, default=.5, help='Restrained: seconds per torque combination')
