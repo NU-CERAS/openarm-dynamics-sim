@@ -45,7 +45,7 @@ Every command takes `--urdf robot.urdf` (imported robot) or `--config file.yaml`
 | `export` | write the generated MJCF | `arm.xml` |
 | `campaign` | find worst-case dynamic loads over many sweeps | `fea-*/`, `campaign-progress.csv` |
 | `watch` | plot a running or finished campaign's convergence | nothing |
-| `bounds` | static gravity and blocked-tip loads, in seconds | `bounds-*/` |
+| `bounds` | static gravity, blocked-tip and (optional) clamped-tip loads, in seconds | `bounds-*/` |
 | `fea-cases` | print a ready-to-enter FEA setup for one part | `fea_setup_<part>.csv` in each export |
 
 Tests: `.venv/bin/pytest` (or `tests/test_urdf.py::test_name` for one). The suite
@@ -294,7 +294,8 @@ load case.
 ### Which result governs what
 
 - **`bounds` blocked** governs static strength (tip blocked, motors at peak torque,
-  capped by `--max-contact-force-n`).
+  capped by `--max-contact-force-n`). With `--max-contact-moment-nm`, **clamped**
+  adds a gripped tip that also reacts a moment; it mainly raises the distal links.
 - **`bounds` gravity** is the everyday baseline and the fatigue **mean** load.
 - **`campaign`** shows whether dynamics matter (for the CAD arm they do not: about
   1.5-3x gravity, below a 100 N tip contact), gives a conservative fatigue **range**,
@@ -431,12 +432,14 @@ campaign's, because the replay uses the live model.
 ### Static bounding loads (`bounds`)
 
 The campaign measures loads during successful sweeps. Structural design must also
-cover events it excludes on purpose. `bounds` computes two static load cases that
-need no random sweeps. **Always pass `--max-contact-force-n`:**
+cover events it excludes on purpose. `bounds` computes two static load cases (three
+with `--max-contact-moment-nm`) that need no random sweeps. **Always pass
+`--max-contact-force-n`:**
 
 ```bash
 .venv/bin/arm-sim bounds --max-contact-force-n 200
 .venv/bin/arm-sim bounds --urdf robots/moving_asm/urdf/moving_asm.urdf --max-contact-force-n 200 --out results/cad-bounds
+.venv/bin/arm-sim bounds --urdf robots/moving_asm/urdf/moving_asm.urdf --max-contact-force-n 100 --max-contact-moment-nm 10
 ```
 
 - **gravity:** the arm holding a pose against gravity alone, searched for the worst
@@ -447,6 +450,14 @@ need no random sweeps. **Always pass `--max-contact-force-n`:**
   `--max-contact-force-n`. `--contacts all` also blocks every moving body origin
   (a pinch along the arm), and `--min-lever-m` (default 0.05 m) skips points
   closer than that to the blocked joint's axis.
+- **clamped** (only with `--max-contact-moment-nm`, which needs
+  `--max-contact-force-n` too): the tip grips a fixed object, so it reacts a force
+  and a moment in any direction. The search covers load directions as well as
+  poses; each load is the largest along its direction that every motor can hold
+  (several may sit at their caps at once), with |F| and |M| within the two caps. It
+  is static, not "all motors at max". Results scale with both caps: take the moment
+  cap from the wrist motors' torque or the gripper's slip limit. Always at the tip,
+  even with `--contacts all`.
 
 Set `--max-contact-force-n` to a design value: a requirement, collision-detection
 threshold or tip-force rating. Without it, aligned poses (like a straight arm
@@ -457,21 +468,23 @@ weight in force, cap x reach in moment). For reference, the CAD arm's motors res
 a median of about 200 N at the tip across random poses and directions, and about
 125 N in its weakest direction at full reach.
 
-Both cases reject self-colliding poses (`--max-overlap-mm`, `--allow-self-collision`)
+All cases reject self-colliding poses (`--max-overlap-mm`, `--allow-self-collision`)
 and poses a motor cannot hold. They start with `--samples` random poses (default
-2000), then refine each row's worst force and moment over `--iterations` poses
-(default 300); `--workers` and `--seed` apply. The run takes seconds. Results go to
-`bounds-*/gravity/` and `bounds-*/blocked/`, each in the usual load-case format
-(`peaks.csv`, `load_cases.*`, `metadata.json`, `model.mjb`; blocked samples also list
-the contact body, point and force). `bounds-*/summary.csv` compares the two and
-`bounds.json` records the settings and assumptions. Combine these with the campaign's
-dynamic peaks and apply your safety factor. Velocities and accelerations are zero in
-both cases.
+2000; clamped also scores 12 random load directions per pose), then refine each
+row's worst force and moment over `--iterations` poses (default 300; clamped
+perturbs the load direction too); `--workers` and `--seed` apply. The run takes
+seconds. Results go to `bounds-*/gravity/`, `bounds-*/blocked/` and, if enabled,
+`bounds-*/clamped/`, each in the usual load-case format (`peaks.csv`,
+`load_cases.*`, `metadata.json`, `model.mjb`; blocked and clamped samples also list
+the contact body, point and force, clamped ones the contact moment too).
+`bounds-*/summary.csv` compares them and `bounds.json` records the settings and
+assumptions. Combine these with the campaign's dynamic peaks and apply your safety
+factor. Velocities and accelerations are zero in every case.
 
 ### Setting up a part in FEA (`fea-cases`)
 
 `fea-cases` turns any load-case export (a campaign `fea-*` folder, a `bounds-*`
-folder, or one of its `gravity`/`blocked` subfolders) into ready-to-enter FEA setups
+folder, or one of its `gravity`/`blocked`/`clamped` subfolders) into ready-to-enter FEA setups
 for one structural part:
 
 ```bash
@@ -490,7 +503,7 @@ For each worst case of that part's mates (peak force and moment magnitudes;
   `--fixed <other body>` picks another, e.g. `rs06_1`). Its load is listed only as
   a check: FEA computes that reaction.
 - **APPLY:** a remote force and moment from each other mate, about the listed
-  point, plus any contact force acting on this part.
+  point, plus any contact force (and, clamped, moment) acting on this part.
 - **BODY:** the part's mass and the acceleration field to apply (gravity minus the
   COM acceleration), plus angular velocity and acceleration for moving cases. This
   is where the delta load enters; do not also apply the delta row.

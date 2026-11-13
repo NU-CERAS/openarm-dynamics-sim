@@ -29,6 +29,18 @@ clamp, so it cannot supply unlimited external support. It uses the simulated mas
 model perfectly; real firmware, delays, friction uncertainty, and calibration can
 produce different tracking. No custom physics integration is performed.
 
+`arm-sim bounds` searches static holding poses and records a gravity-only case plus
+blocked-tip force cases, capped by `--max-contact-force-n`. Supplying
+`--max-contact-moment-nm` also searches clamped-tip wrench cases: a fixed grasp may react
+any force and moment direction, bounded by both caps, while each motor stays within its
+peak torque cap. This is a sampled pose and load-direction search, so it finds the largest
+loads encountered, not a proven maximum. The clamped comparison contains the blocked-tip
+cases when using the default `--contacts tip`; with `--contacts all`, blocked cases can
+also act on moving-body origins, which a tip clamp does not reproduce. The moment cap must
+come from the gripper's slip limit or the wrist motors' capability; it is an input
+assumption, not a value inferred by the model. These cases assume zero velocity and
+acceleration and do not cover a constrained dynamic transient.
+
 Peak/rated output torques are derated by 0.8 by default. If `speed_envelope` is true,
 limits are constant up to rated speed, then linearly fall to zero at no-load speed.
 This symmetric envelope is a screening assumption, not a measured RobStride curve

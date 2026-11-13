@@ -27,6 +27,7 @@ def main():
     p.add_argument('--min-lever-m',type=float,default=.05,help='Bounds: nearest blocking point to a joint axis (default 0.05 m)')
     p.add_argument('--contacts',choices=['tip','all'],default='tip',help='Bounds: block only the tool tip (default) or also every moving body origin')
     p.add_argument('--max-contact-force-n',type=float,help='Bounds: design limit on the blocking force (default: motor-limited only)')
+    p.add_argument('--max-contact-moment-nm',type=float,help='Bounds: adds the clamped tip case (any force and moment) with this moment cap; needs --max-contact-force-n')
     p.add_argument('--live',action='store_true',help='Campaign: open a live plot of peak loads and their Fx..Mz record states every 10 counted sweeps (same as arm-sim watch)')
     p.add_argument('--results',type=Path,help='fea-cases: a campaign fea-* folder or a bounds-* folder. watch: a progress/convergence CSV or a folder to search (default --out)')
     p.add_argument('--part',help='fea-cases: the structural part to set up for FEA, e.g. part_3 (a merged part goes by its root body)')
@@ -106,16 +107,16 @@ def main():
         try:
             folder,recs=bounds(c,args.out,2000 if args.samples is None else args.samples,300 if args.iterations is None else args.iterations,
                                args.workers,args.seed,c['drive']['torque_derating'] if args.derated else 1.,
-                               None if args.allow_self_collision else args.max_overlap_mm,args.min_lever_m,args.contacts,args.max_contact_force_n)
+                               None if args.allow_self_collision else args.max_overlap_mm,args.min_lever_m,args.contacts,args.max_contact_force_n,
+                               args.max_contact_moment_nm)
         except (ValueError,RuntimeError) as exc:
             p.error(str(exc))
         if args.max_contact_force_n is None:
             print('WARNING: blocked loads are motor-limited only. Aligned poses let small torques resist huge forces, so they grow with sampling; set --max-contact-force-n to a design contact force.')
         f,mo=OBJECTIVES
-        print(f'{"interface":28} {"gravity N":>10} {"gravity Nm":>11} {"blocked N":>10} {"blocked Nm":>11}')
+        print(f'{"interface":28}'+''.join(f' {k+" N":>10} {k+" Nm":>11}' for k in recs))
         for i,interface in enumerate(recs['gravity'].interfaces):
-            print(f'{interface["label"]:28} {recs["gravity"].maximum[i,f]:10.1f} {recs["gravity"].maximum[i,mo]:11.2f} '
-                  f'{recs["blocked"].maximum[i,f]:10.1f} {recs["blocked"].maximum[i,mo]:11.2f}')
+            print(f'{interface["label"]:28}'+''.join(f' {r.maximum[i,f]:10.1f} {r.maximum[i,mo]:11.2f}' for r in recs.values()))
         print(folder)
         return
     if args.command=='export':
