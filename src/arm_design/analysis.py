@@ -77,7 +77,7 @@ class RunStore:
             revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
         except (OSError, subprocess.CalledProcessError):
             revision = 'unknown'
-        self.state = dict(schema_version=1, scenario=scenario, status='running', settings=settings,
+        self.state = dict(schema_version=1, live_preview_version=1, scenario=scenario, status='running', settings=settings,
                           robot=arm.cfg['name'], revision=revision, mujoco_version=mujoco.__version__,
                           started_at=stamp, trials=0, counted=0, rejected=0, export=None,
                           interfaces=self.meta['interfaces'], history=[])

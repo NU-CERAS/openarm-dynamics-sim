@@ -15,6 +15,7 @@ from .collision import CollisionChecker, describe
 from .fea import FEARecording
 from .model import Arm, build_arm, values
 from .simulation import torque_limit
+from .live_preview import LivePublisher
 
 _worker = None
 
@@ -60,7 +61,7 @@ def set_pose(arm, q):
 
 
 def trial(arm, q, signs, duration=.5, ramp=.05, checker=None, full_history=False,
-          position_tolerance=.005, angle_tolerance=.05):
+          position_tolerance=.005, angle_tolerance=.05, preview=None):
     m, c = arm.model, arm.cfg
     d, target_p, target_R = set_pose(arm, q)
     rec = FEARecording(arm, d)
@@ -69,7 +70,11 @@ def trial(arm, q, signs, duration=.5, ramp=.05, checker=None, full_history=False
     max_position, max_angle = 0., 0.
     tip = m.site('tip').id
     body = int(m.site_bodyid[tip])
+    if preview:
+        preview.begin('restrained',float(duration))
     for k in range(int(np.ceil(duration/m.opt.timestep))):
+        if preview:
+            preview.sample(d,'restrained')
         cap = torque_limit(c, d.qvel)
         u = min(float(d.time)/ramp, 1.)
         command = signs*cap*(u*u*(3-2*u))
@@ -127,18 +132,18 @@ def trial(arm, q, signs, duration=.5, ramp=.05, checker=None, full_history=False
     return result
 
 
-def _init(cfg, options):
+def _init(cfg, options, preview_path=None, preview_owner=None):
     global _worker
     arm = build_restrained(cfg, options['time_constant'])
     checker = CollisionChecker(build_arm(cfg))
-    _worker = arm, checker, options
+    _worker = arm, checker, options, LivePublisher(preview_path,preview_owner)
 
 
 def _run(job):
-    arm, checker, opts = _worker
+    arm, checker, opts, preview = _worker
     pose_id, q, signs = job
     result = trial(arm, q, signs, opts['duration'], opts['ramp'], checker, opts['full_history'],
-                   opts['position_tolerance'], opts['angle_tolerance'])
+                   opts['position_tolerance'], opts['angle_tolerance'],preview=preview)
     return dict(result, pose_id=pose_id)
 
 
@@ -207,7 +212,7 @@ def restrained(cfg, out, poses=3, seed=0, workers=1, duration=.5, ramp=.05,
     jobs = iter(islice(jobs, max_trials)) if max_trials else iter(jobs)
     context = multiprocessing.get_context('spawn')
     try:
-        with ProcessPoolExecutor(workers, context, _init, (cfg, options)) as pool:
+        with ProcessPoolExecutor(workers, context, _init, (cfg, options,str(store.path),context.Value('i',0))) as pool:
             while not store.cancelled:
                 batch = list(islice(jobs, workers))
                 if not batch:

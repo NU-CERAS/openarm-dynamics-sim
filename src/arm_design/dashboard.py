@@ -411,12 +411,12 @@ def run_controls(models):
         html.Fieldset([
         html.Label('Robot'), dcc.Dropdown(id='model',options=[{'label':p.parent.parent.name if 'robots' in p.parts else 'Built-in arm','value':str(p)} for p in models],value=str(models[0]),clearable=False),
         html.Label('Run name (optional)'),dcc.Input(id='run-name',placeholder='e.g. 0.5 kg drumstick test',persistence=True),
-        html.Label('Additional payload mass (kg)'),dcc.Input(id='payload-mass',type='number',min=0,value=0,step=.05,persistence=True),
+        html.Label('Additional payload mass (kg)'),dcc.Input(id='payload-mass',type='number',min=0,value=5,step=.05,persistence='runner-defaults-v2'),
         html.P('Added to the modeled end effector. Zero keeps its existing mass. A fixed payload box supplies mass, inertia and collision geometry.',className='note'),
         html.Div([
-            html.Label('Maximum trials · free motion'),dcc.Input(id='free-count',type='number',min=1,step=1,value=2000,persistence=True),
-            html.Label('Motion'),dcc.Dropdown(id='motion-mode',options=[{'label':'Aggressive duration search','value':'aggressive'}, {'label':'Random sweep durations','value':'random'}],value='aggressive',clearable=False,persistence=True),
-            html.Label('Minimum / maximum sweep duration (s)'),dcc.Input(id='min-duration',type='number',min=.1,value=.1,persistence=True),dcc.Input(id='max-duration',type='number',min=.1,value=5,persistence=True),
+            html.Label('Maximum trials · free motion'),dcc.Input(id='free-count',type='number',min=1,step=1,value=1000,persistence='runner-defaults-v2'),
+            html.Label('Motion'),dcc.Dropdown(id='motion-mode',options=[{'label':'Aggressive duration search','value':'aggressive'}, {'label':'Random sweep durations','value':'random'}],value='aggressive',clearable=False,persistence='runner-defaults-v2'),
+            html.Label('Minimum / maximum sweep duration (s)'),dcc.Input(id='min-duration',type='number',min=.1,value=.1,persistence='runner-defaults-v2'),dcc.Input(id='max-duration',type='number',min=.1,value=1,persistence='runner-defaults-v2'),
         ],id='free-run-controls'),
         html.Div([
             html.Label('Number of restrained poses'),dcc.Input(id='pose-count',type='number',min=1,step=1,value=3,persistence=True),
@@ -495,11 +495,13 @@ def create_app(root):
                 html.Progress(id='runner-progress',value=0,max=1),
                 html.Div(id='runner-counters',className='runner-counters'),
                 html.P(id='runner-config',className='note'),
+                dcc.Checklist(id='live-arm-enabled',options=[{'label':'Live arm preview · one worker','value':'live'}],value=[]),
+                html.Div(id='runner-arm-ready',style={'display':'none'}),
                 html.Div([html.Label('LOAD COMPONENT'),dcc.Dropdown(id='runner-metric',options=[
                     {'label':f'{m.replace("_", " ")}', 'value':m} for m in METRICS[:6]],value='Fx_N',clearable=False),
                 ],className='chart-controls'),
-                dcc.Graph(id='runner-extremes',figure=blank('Running signed extremes','Start a test to see live records.'),
-                    style={'height':'340px'},config={'responsive':True}),
+                html.Div([html.Div(id='runner-arm',style={'display':'none'}),dcc.Graph(id='runner-extremes',figure=blank('Running signed extremes','Start a test to see live records.'),
+                    style={'height':'340px'},config={'responsive':True})],id='runner-visuals'),
                 html.P('Solid = running maximum; dashed = running minimum. Records use accepted trials at each link’s FEA connection. Click a legend entry to hide a link.',className='note'),
                 html.H2('Latest completed trial'),html.P(id='runner-latest',className='note'),
                 html.Div(id='runner-table',className='link-summary runner-table'),
@@ -553,6 +555,27 @@ def create_app(root):
         if not p.is_relative_to(root):
             raise ValueError('Run must be inside the dashboard results directory.')
         return p
+
+    @app.server.post('/runner-live')
+    def runner_live():
+        from .live_preview import watched_pose
+        try:
+            p = safe((request.get_json(silent=True) or {}).get('run',''))
+            if not (p/'run.json').exists() or not (p/'model.mjb').exists():
+                abort(404)
+            info = run_info(p)
+            supported = info.get('live_preview_version') == 1
+            pose = watched_pose(p,supported and info['status']=='running')
+            response = jsonify(status=info['status'],pose=pose,supported=supported)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ValueError,OSError):
+            abort(404)
+
+    app.clientside_callback("""function(path, enabled, tab) {
+        return window.armLivePreview.show(path, (enabled || []).includes('live') && tab === 'runner');
+    }""",Output('runner-arm-ready','children'),Input('runner-run','data'),
+        Input('live-arm-enabled','value'),Input('workspace-tab','value'))
 
     app.clientside_callback("""function(tab) {
         window.setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 80);

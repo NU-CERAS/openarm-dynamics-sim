@@ -604,6 +604,19 @@ labeled and never contribute to accepted records. Updates reflect completed tria
 not instantaneous timesteps. Runner keeps tracking its own test while Viewer browses
 other runs. **View results** opens the monitored run in Viewer, including partial data.
 
+Enable **Live arm preview · one worker** in Runner to see a sampled 3D view beside
+the running-extremes chart. One simulation worker publishes its current joint angles
+at most five times per wall-clock second; meshes load once per run, and the browser
+computes transforms and interpolates motion at up to 30 frames/s. The label identifies
+the worker, phase and simulated time. This is a sampled preview, not every physics
+timestep, and a parallel worker can be ahead of the latest collected results.
+Drag to orbit, scroll to zoom, or use **Reset view**. Rendering and polling pause when
+the preview is off, Viewer is selected, or the browser tab is hidden. Worker writes
+expire within three seconds after the last visible preview stops polling. Simulations
+never wait for rendering. This requires a newly started test; older/running processes
+started before the feature was added cannot publish poses. A completed test retains
+its last sampled pose when one was captured, separately from full trial playback.
+
 New runs update their progress, extrema, histograms and trial explorer as results
 arrive. The UI polls every 1.5 seconds. **Stop test** stops
 the active dashboard run in the current mode, or the selected running analysis if

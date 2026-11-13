@@ -19,6 +19,7 @@ from .model import build_arm
 from .reporting import summary
 from .simulation import Sweep
 from .analysis import RunStore, distribution
+from .live_preview import LivePublisher
 
 # Every reported connection is refined on both magnitudes.
 OBJECTIVES = (METRICS.index('force_N'), METRICS.index('moment_Nm'))
@@ -27,6 +28,7 @@ _include_failed = False
 _checker = None
 _full_history = False
 _cancel_path = None
+_preview = None
 # Physics samples between collision checks of the simulated motion (5 ms at 1 kHz).
 CHECK_EVERY = 5
 # Perturbations tried per refinement iteration before giving up on a collision-free path.
@@ -36,15 +38,16 @@ PROGRESS_EVERY = 10
 PROGRESS = 'campaign-progress.csv'
 
 
-def _init(cfg, include_failed=False, max_overlap_mm=0., full_history=False, cancel_path=None):
-    global _arm, _include_failed, _checker, _full_history, _cancel_path
+def _init(cfg, include_failed=False, max_overlap_mm=0., full_history=False, cancel_path=None, preview_owner=None):
+    global _arm, _include_failed, _checker, _full_history, _cancel_path, _preview
     # Sweeps rewrite arm.cfg['sweep']; never alias the caller's configuration.
     _full_history, _cancel_path = full_history, cancel_path
     _arm, _include_failed = build_arm(deepcopy(cfg)), include_failed
     _checker = None if max_overlap_mm is None else CollisionChecker(_arm, max_overlap_mm)
+    _preview = LivePublisher(Path(cancel_path).parent if cancel_path else None, preview_owner)
 
 
-def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=False):
+def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=False, preview=None):
     """One recorded A -> B sweep starting at rest at A; only sweep+hold loads count.
 
     By default a sweep counts only if it tracks within tolerance: commands the
@@ -60,8 +63,12 @@ def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=Fa
     rec.phases = ('sweep', 'hold')
     result = dict(a_deg=s['a_deg'], b_deg=s['b_deg'], duration_s=float(duration))
     collision, validity = {}, ''
+    if preview:
+        preview.begin('campaign',float(duration))
     try:
         while run.tick(arm, data, recorder=rec):
+            if preview:
+                preview.sample(data,run.rows[-1]['phase'])
             if not rec.active:
                 run.reason = rec.reason
                 break
@@ -113,7 +120,7 @@ def run_sweep(arm, a, b, duration, include_failed=False, checker=None, strict=Fa
 
 
 def _sweep(params):
-    return [run_sweep(_arm, *params, _include_failed, _checker)]
+    return [run_sweep(_arm, *params, _include_failed, _checker, preview=_preview)]
 
 
 def duration_search(run, a, b, bounds, attempts, pair_id=0, direction='A to B'):
@@ -142,7 +149,7 @@ def _aggressive(job):
     a, b, bounds, attempts, pair_id, direction = job
     results = []
     def run(a, b, duration):
-        return run_sweep(_arm, a, b, duration, checker=_checker, strict=True)
+        return run_sweep(_arm, a, b, duration, checker=_checker, strict=True, preview=_preview)
     for result in duration_search(run, a, b, bounds, attempts, pair_id, direction):
         results.append(result)
         if _cancel_path and Path(_cancel_path).exists():
@@ -152,7 +159,7 @@ def _aggressive(job):
 
 def _validation_trial(job):
     index, source = job
-    r = run_sweep(_arm, source['a_deg'], source['b_deg'], source['duration_s'], checker=_checker, strict=True)
+    r = run_sweep(_arm, source['a_deg'], source['b_deg'], source['duration_s'], checker=_checker, strict=True, preview=_preview)
     return dict(trial=index, counted=r['counted'], reason=r['reason'],
                 maximum=np.asarray(r.get('maximum', [])).tolist(), minimum=np.asarray(r.get('minimum', [])).tolist())
 
@@ -168,7 +175,7 @@ def validate_extreme_sweeps(cfg, store, peaks, sweeps, workers, log):
         fine['simulation']['step_s'] /= divisor
         checked = []
         with ProcessPoolExecutor(workers, context, _init,
-                (fine, False, store.state['settings']['max_overlap_mm'], False, str(store.path/'CANCEL'))) as pool:
+                (fine, False, store.state['settings']['max_overlap_mm'], False, str(store.path/'CANCEL'),context.Value('i',0))) as pool:
             for offset in range(0, len(jobs), workers):
                 if store.cancelled:
                     break
@@ -221,7 +228,7 @@ def _refine(job):
             sigma = max(sigma*.85, .005)
             continue
         td = float(np.clip(duration*np.exp(rng.normal(0, sigma*3)), *job['duration_range']))
-        result = run_sweep(_arm, ta, tb, td, _include_failed, _checker)
+        result = run_sweep(_arm, ta, tb, td, _include_failed, _checker, preview=_preview)
         results.append(result)
         value = score(result, job['interface'], job['metric'])
         if value > best:
@@ -450,7 +457,7 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
         else:
             context = multiprocessing.get_context('spawn')
             with ProcessPoolExecutor(workers, context, _init,
-                    (cfg, include_failed, max_overlap_mm, full_history, str(store.path/'CANCEL'))) as pool:
+                    (cfg, include_failed, max_overlap_mm, full_history, str(store.path/'CANCEL'),context.Value('i',0))) as pool:
                 for offset in range(0, len(jobs), workers):
                     if store.cancelled:
                         break

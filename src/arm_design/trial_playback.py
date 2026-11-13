@@ -26,6 +26,8 @@ def packed(array, dtype):
 @lru_cache(maxsize=4)
 def model_geometry(model_path, modified_ns):
     model = mujoco.MjModel.from_binary_path(model_path)
+    data = mujoco.MjData(model)
+    mujoco.mj_kinematics(model,data)
     meshes, geoms = {}, []
     for g in visual_geoms(model):
         mesh_id = int(model.geom_dataid[g])
@@ -35,9 +37,21 @@ def model_geometry(model_path, modified_ns):
             f, nf = model.mesh_faceadr[mesh_id], model.mesh_facenum[mesh_id]
             meshes[str(mesh_id)] = dict(vertices=packed(model.mesh_vert[v:v+nv], '<f4'),
                                        faces=packed(model.mesh_face[f:f+nf], '<u4'))
-        geoms.append(dict(body=mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[g]),
-                          kind=kind, mesh=mesh_id, size=model.geom_size[g].tolist()))
-    return dict(meshes=meshes, geoms=geoms)
+        b = int(model.geom_bodyid[g])
+        R = data.xmat[b].reshape(3,3)
+        local_pos = R.T@(data.geom_xpos[g]-data.xpos[b])
+        local_quat = np.zeros(4)
+        # Honor MuJoCo's compiled same-frame shortcuts, including CAD rotations
+        # snapped to an inertial/body frame instead of the raw near-identity quat.
+        mujoco.mju_mat2Quat(local_quat,(R.T@data.geom_xmat[g].reshape(3,3)).ravel())
+        geoms.append(dict(body=mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b),
+                          body_id=b,pos=local_pos.tolist(),quat=local_quat.tolist(),
+                          rgba=model.geom_rgba[g].tolist(),kind=kind, mesh=mesh_id, size=model.geom_size[g].tolist()))
+    bodies = [dict(parent=int(model.body_parentid[b]),pos=model.body_pos[b].tolist(),quat=model.body_quat[b].tolist())
+              for b in range(model.nbody)]
+    joints = [dict(body=int(model.jnt_bodyid[j]),kind=int(model.jnt_type[j]),axis=model.jnt_axis[j].tolist(),
+                   pos=model.jnt_pos[j].tolist(),qpos=int(model.jnt_qposadr[j])) for j in range(model.njnt)]
+    return dict(meshes=meshes, geoms=geoms,bodies=bodies,joints=joints,qpos0=model.qpos0.tolist())
 
 
 def metric_value(load, metric):
