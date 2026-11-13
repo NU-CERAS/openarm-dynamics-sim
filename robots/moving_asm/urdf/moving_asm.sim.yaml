@@ -3,6 +3,7 @@
 # RS00/RS06 housings use 0.310/0.621 kg with CAD COM and mass-scaled inertia.
 # The real part_7 mesh and mass/inertia are retained; no placeholder tool is added.
 # Reported tip defaults to the part_7 link origin; set tip_offset_m for a measured tool-tip point.
+# fea.exclude_bodies: RobStride housings (rs*) get no FEA load rows; only part_1..part_7 mates and deltas are reported.
 # Joint angles in this file are degrees; URDF uses SI units.
 model_type: urdf
 name: CAD arm / RobStride / 7 links
@@ -122,6 +123,9 @@ simulation:
   step_s: 0.001
   contacts: false
   floor_z_m: -0.742
+fea:
+  exclude_bodies:
+  - rs*
 sweep:
   a_deg:
   - 0.0

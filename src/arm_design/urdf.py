@@ -209,6 +209,7 @@ def prepare_urdf_config(path, package_roots=()):
                  motors={}, joints=[],
                  drive=dict(torque_derating=1., speed_envelope=False, gravity_compensation=True),
                  simulation=dict(step_s=.001, contacts=False, floor_z_m=-.05),
+                 fea=dict(exclude_bodies=[]),
                  sweep=dict(a_deg=[], b_deg=[], duration_s=3., approach_s=2., settle_s=1., hold_s=1.,
                             tracking_tolerance_deg=2., jog_speed_deg_s=30.))
         for name, info in joints:

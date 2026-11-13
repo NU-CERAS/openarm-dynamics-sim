@@ -66,7 +66,6 @@ class Window:
         self.campaign_path = ''
         self.campaign_metric = METRICS.index('force_N')
         self.campaign_pause = True
-        self.campaign_both = False
 
     def render_resources(self, model=None):
         model = self.experiment.arm.model if model is None else model
@@ -144,14 +143,13 @@ class Window:
             imgui.text_wrapped('No samples. Resume simulation during the next recording.')
             return
         imgui.text('Maximum observed loads')
-        imgui.text_wrapped('Forces in N; moments in Nm. Each connection is shown separately in the receiving link frame.')
-        # Put moving links first, retaining fixed motor/tool bodies for their
-        # own structural analyses.
-        primary = list(dict.fromkeys(int(i) for i in recording.model.jnt_bodyid))
-        bodies = primary + [i for i in recording.body_ids if i not in primary]
+        imgui.text_wrapped('Forces in N; moments in Nm, in the part frame. Each mate is shown separately; delta is their sum about the proximal mate.')
+        # Structural parts only, moving links first.
+        primary = [int(i) for i in recording.model.jnt_bodyid]
+        bodies = sorted(dict.fromkeys(x['body_id'] for x in recording.interfaces), key=lambda i: i not in primary)
         self.fea_body = min(self.fea_body, len(bodies)-1)
         imgui.set_next_item_width(245)
-        changed, self.fea_body = imgui.combo('Link / body', self.fea_body,
+        changed, self.fea_body = imgui.combo('Part', self.fea_body,
                                            [recording.names[i] for i in bodies])
         if changed:
             self.fea_interface = 0
@@ -160,7 +158,7 @@ class Window:
         self.fea_interface = min(self.fea_interface, len(interfaces)-1)
         imgui.set_next_item_width(245)
         _, self.fea_interface = imgui.combo('Connection', self.fea_interface,
-            [recording.names[recording.interfaces[i]['other_body_id']] for i in interfaces])
+            [recording.names.get(recording.interfaces[i]['other_body_id'], 'delta (sum of mates)') for i in interfaces])
         i = interfaces[self.fea_interface]
         if imgui.begin_table('FEA extrema', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
             for name in ('Load', 'Minimum', 'Maximum'):
@@ -237,17 +235,11 @@ class Window:
         imgui.set_next_item_width(170)
         _, self.campaign_metric = imgui.combo('Load##campaign', self.campaign_metric, list(METRICS))
         _, self.campaign_pause = imgui.checkbox('Pause at peak', self.campaign_pause)
-        imgui.same_line()
-        _, self.campaign_both = imgui.checkbox('Both sides', self.campaign_both)
-        # Magnitudes match on both receiving-body views; show the child side unless asked.
-        m = e.arm.model
-        name = lambda i: 'world' if i == 0 else (m.body(i).name or f'body_{i}')
-        primary = {f'{name(i)} <- {name(int(m.body_parentid[i]))}' for i in range(1, m.nbody)}
         metric = METRICS[self.campaign_metric]
-        peaks = [p for p in c['peaks'] if p['metric'] == metric and (self.campaign_both or p['interface'] in primary)]
+        peaks = [p for p in c['peaks'] if p['metric'] == metric]
         imgui.begin_disabled(e.busy)
         if imgui.begin_table('Campaign peaks', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
-            for column in ('Connection', 'Minimum', 'Maximum'):
+            for column in ('Mate / delta', 'Minimum', 'Maximum'):
                 imgui.table_setup_column(column)
             imgui.table_headers_row()
             for k, peak in enumerate(peaks):

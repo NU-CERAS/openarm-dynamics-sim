@@ -55,18 +55,42 @@ Geometry and inertial changes require editing YAML and reloading.
 The optional FEA recorder calls MuJoCo's `mj_rnePostConstraint` after the same
 pre-integration forward pass. It translates parent/child interaction wrenches from
 the subtree COM reference to each connection point, then rotates them into each
-receiving body's local frame. Hinge connections use their joint anchor; fixed
-connections use the child body origin. Equal/opposite interface views are exported
-for the two receiving bodies. Actuator torque is already represented in the
+receiving part's local frame. Hinge connections use their joint anchor; fixed
+connections use the child body origin. Actuator torque is already represented in the
 interaction loads and must not be added to those loads a second time.
+
+Loads are reported per structural part, not per MuJoCo body. Bodies whose names match
+a glob in `fea.exclude_bodies` (the CAD arms use `rs*`, the RobStride housings) are
+actuators: they receive no load rows, but a link's mates with them are kept, since
+those are the loads the link carries. With the key absent or empty every body is a
+part. A structural body attached with no joint to another structural body merges into
+it (the right arm's `base` + `screwon` + `drumstick`): the merged part has no internal
+rows, its loads and mate points are in its root body's frame (`base`), and metadata
+`parts` gives its combined mass, COM and inertia about the COM in that frame. The world
+is never merged into; the mate to it is the base reaction.
+
+Each part has one row per mate, a wrench `[Fx, Fy, Fz, Mx, My, Mz]` acting ON the part
+at the mate point: first its proximal mate (toward the base), then its distal ones.
+A `<part> delta` row follows: the sum of all the part's mate wrenches, with moments
+taken about the proximal mate point, in the part frame. It is the load entering at one
+mate that is not passed on at the other. By Newton-Euler it equals `m (a_COM - g)` plus
+the rotational inertia terms, minus any external (contact) load on the part, so at
+rest its force is minus the part's weight. It is a result to read, not a load to apply:
+body loads already account for it. A part with a single mate (the merged tool) has no
+delta row because it would repeat that mate, and a massless frame (the import's base
+wrapper) has none because it is zero. Where two parts mate directly with no actuator
+between them, as in the built-in generated arm, each part has its own row for that mate.
+The campaign refines the force and moment magnitude of every row and logs the full
+wrench of each record-setting sample (see `convergence.csv`).
 
 Body COM velocity and physical acceleration are recorded in world axes, with
 angular components first. MuJoCo's RNE gravity offset is removed from acceleration
 for moving bodies; bodies welded to the world have zero physical acceleration.
 External contact/perturbation resultants are recorded about each body's COM in
 local axes, separately from interface loads and gravity. They preserve the net
-wrench but not contact pressure distributions. Fixed URDF motor bodies remain
-distinct; the generated model's aggregate mass/inertia does not isolate motor
+wrench but not contact pressure distributions. These kinematic arrays stay per
+MuJoCo body. Fixed URDF motor bodies remain distinct bodies (so a link's mass excludes
+its actuators); the generated model's aggregate mass/inertia does not isolate motor
 mount forces from its structural link.
 
 The FEA recorder retains all phases, including approach and settling, and is

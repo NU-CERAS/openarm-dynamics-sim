@@ -24,18 +24,22 @@ def exports(folder):
 def part_cases(folder, part, fixed=None, all_extremes=False):
     """Setups for every selected load case of one part in one export folder."""
     meta = json.loads((folder/'metadata.json').read_text())
-    bodies = {b['name']: b for b in meta['bodies']}
-    if part not in bodies:
-        raise ValueError(f'No body {part!r}. Bodies: {", ".join(bodies)}')
-    body = bodies[part]
-    interfaces = [f for f in meta['interfaces'] if f['body_id'] == body['body_id']]
+    if 'parts' not in meta:
+        raise ValueError(f'{folder} predates per-part exports (schema 2); rerun the campaign or bounds.')
+    parts = {p['name']: p for p in meta['parts']}
+    if part not in parts:
+        raise ValueError(f'No structural part {part!r}. Parts: {", ".join(parts)}')
+    body = parts[part]
     names = {b['body_id']: b['name'] for b in meta['bodies']} | {0: 'world'}
-    others = [names[f['other_body_id']] for f in interfaces]
+    rows_of = [(i, f) for i, f in enumerate(meta['interfaces']) if f['body_id'] == body['body_id']]
+    mates = [(i, f) for i, f in rows_of if f['kind'] == 'mate']
+    delta = next((i for i, f in rows_of if f['kind'] == 'delta'), None)
+    others = [names[f['other_body_id']] for _, f in mates]
     # Fix the proximal side (toward the base) unless told otherwise.
-    fixed = fixed or names[body['parent_id']]
+    fixed = fixed or others[0]
     if fixed not in others:
         raise ValueError(f'{part} connects to {", ".join(others)}; cannot fix {fixed!r}.')
-    labels = {f['label'] for f in interfaces}
+    labels = {f['label'] for _, f in rows_of}
     metrics = METRICS if all_extremes else ('force_N', 'moment_Nm')
     reasons = {}
     with (folder/'peaks.csv').open() as f:
@@ -50,33 +54,40 @@ def part_cases(folder, part, fixed=None, all_extremes=False):
     samples = {s['sample_index']: s for s in json.loads((folder/'load_cases.json').read_text())['samples']}
     gravity_world = np.array(meta['gravity_world_m_s2'])
     k = body['body_id']-1
+    # A merged part moves as one rigid body: combined mass, mass-weighted COM acceleration.
+    members = [(b['body_id']-1, b['name'], b['mass_kg']) for b in meta['bodies'] if b['name'] in body['bodies']]
+    mass = body['mass_kg']
     result = []
     for index in sorted(reasons):
         s = samples[index]
         R = np.array(s['body_rotation_world'][k])
+        origin = np.array(s['body_origin_world_m'][k])
         loads = np.array(s['loads_local'])
         points = np.array(s['application_points_local_m'])
-        rows = [dict(other=names[f['other_body_id']], point=points[i], load=loads[i]) for i, f in
-                enumerate(meta['interfaces']) if f['body_id'] == body['body_id']]
+        rows = [dict(other=names[f['other_body_id']], point=points[i], load=loads[i]) for i, f in mates]
         gravity = R.T@gravity_world
-        acceleration = R.T@np.array(s['com_acceleration_world'][k][3:])
+        accelerations = np.array(s['com_acceleration_world'])
+        acceleration = R.T@(sum(m*accelerations[b, 3:] for b, _, m in members)/mass if mass else accelerations[k, 3:])
         angular_velocity = R.T@np.array(s['com_velocity_world'][k][:3])
-        angular_acceleration = R.T@np.array(s['com_acceleration_world'][k][:3])
+        angular_acceleration = R.T@accelerations[k, :3]
         contact = None
-        if s.get('contact_body') == part:
-            point = R.T@(np.array(s['contact_point_world_m'])-np.array(s['body_origin_world_m'][k]))
-            contact = dict(point=point, force=R.T@np.array(s['contact_force_on_arm_world_N']))
+        if s.get('contact_body') in body['bodies']:
+            contact = dict(point=R.T@(np.array(s['contact_point_world_m'])-origin),
+                           force=R.T@np.array(s['contact_force_on_arm_world_N']))
             external = contact['force']
         else:
-            external = np.array(s['external_resultant_at_com_local'][k][:3])
+            # Each member's resultant is in its own frame; sum them in the part frame.
+            external = R.T@sum(np.array(s['body_rotation_world'][b])@np.array(s['external_resultant_at_com_local'][b][:3])
+                               for b, _, _ in members)
             if np.linalg.norm(external) > 1e-9:
                 contact = dict(point=np.array(body['com_local_m']), force=external, at_com=True)
         # Newton on the rigid part: connections + external + weight = m a.
-        residual = sum(r['load'][:3] for r in rows) + external + body['mass_kg']*(gravity-acceleration)
+        residual = sum(r['load'][:3] for r in rows) + external + mass*(gravity-acceleration)
         result.append(dict(sample=index, phase=s['phase'], reasons=reasons[index], fixed=fixed,
                            applied=[r for r in rows if r['other'] != fixed],
                            reaction=next(r for r in rows if r['other'] == fixed),
-                           mass_kg=body['mass_kg'], com_m=np.array(body['com_local_m']),
+                           delta=None if delta is None else dict(other=others[0], point=points[delta], load=loads[delta]),
+                           bodies=body['bodies'], mass_kg=mass, com_m=np.array(body['com_local_m']),
                            gravity=gravity, acceleration=acceleration, effective_acceleration=gravity-acceleration,
                            angular_velocity=angular_velocity, angular_acceleration=angular_acceleration,
                            contact=contact, residual_n=float(np.linalg.norm(residual))))
@@ -90,6 +101,8 @@ def vec(v, digits=4):
 def report(folder, part, cases):
     lines = [f'=== {part}: {folder.parent.name}/{folder.name} ({len(cases)} load cases)',
              'Frame: the part\'s own link frame (URDF/CAD). Forces N, moments Nm, points m.']
+    if cases and len(cases[0]['bodies']) > 1:
+        lines.append(f"One solid part: {' + '.join(cases[0]['bodies'])}, in the {part} frame; combined mass and COM.")
     for c in cases:
         lines += ['', f"Case {c['sample']}: {c['phase']}", '  Selected for: '+'; '.join(c['reasons']),
                   f"  FIX: the {c['fixed']} mounting face (its reaction is computed by FEA; check: "
@@ -100,7 +113,10 @@ def report(folder, part, cases):
         if c['contact']:
             where = 'at the COM (resultant)' if c['contact'].get('at_com') else 'at'
             lines.append(f"  APPLY contact force {where} {vec(c['contact']['point'])}: F {vec(c['contact']['force'])}")
-        lines.append(f"  BODY: mass {c['mass_kg']:.4g} kg; acceleration field (gravity - COM acceleration) "
+        if c['delta']:
+            lines.append(f"  DELTA (sum of mate loads about the {c['delta']['other']} mate; do not apply, body loads carry it): "
+                         f"F {vec(c['delta']['load'][:3])}, M {vec(c['delta']['load'][3:])}")
+        lines.append(f"  BODY: mass {c['mass_kg']:.4g} kg, COM {vec(c['com_m'])}; acceleration field (gravity - COM acceleration) "
                      f"{vec(c['effective_acceleration'])} m/s^2")
         if np.linalg.norm(c['angular_velocity']) > 1e-9 or np.linalg.norm(c['angular_acceleration']) > 1e-9:
             lines.append(f"        angular velocity {vec(c['angular_velocity'])} rad/s, "
