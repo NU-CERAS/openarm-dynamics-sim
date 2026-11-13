@@ -1,0 +1,7 @@
+Three.js 0.170.0 (MIT; see THREE-LICENSE.txt)
+
+three.module.js: https://unpkg.com/three@0.170.0/build/three.module.min.js
+OrbitControls.js: https://unpkg.com/three@0.170.0/examples/jsm/controls/OrbitControls.js
+
+OrbitControls' bare 'three' import is replaced with './three.module.js'.
+These files are served locally and dynamically imported only when a trial is played.

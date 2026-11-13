@@ -1,6 +1,7 @@
-"""Time-aligned rigid-body load histories; structural stresses belong in FEA."""
+"""Time-aligned rigid-body load histories per structural part; stresses belong in FEA."""
 from copy import copy, deepcopy
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 import csv
 import json
@@ -21,10 +22,15 @@ def jsonable(value):
     raise TypeError(f'Cannot serialize {type(value)}')
 
 
+def cross(a, b):
+    # np.cross's axis handling dominated per-step recording cost for 3-vectors.
+    return np.array((a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]))
+
+
 def local_wrench(wrench, reference, point, rotation):
     """MuJoCo world [moment, force] about reference -> local [force, moment]."""
     force = wrench[3:]
-    moment = wrench[:3] + np.cross(reference-point, force)
+    moment = wrench[:3] + cross(reference-point, force)
     return np.concatenate((rotation.T@force, rotation.T@moment))
 
 
@@ -37,6 +43,8 @@ class FEARecording:
         self.start_time = float(data.time)
         self.active = True
         self.reason = ''
+        # Optional phase names (e.g. sweep, hold) to capture; None records every step.
+        self.phases = None
         self.rows = []
         self.last_export = None
         self.selected_samples = set()
@@ -45,16 +53,28 @@ class FEARecording:
         self.body_ids = list(range(1, m.nbody))
         self.names = {i: m.body(i).name or f'body_{i}' for i in range(m.nbody)}
         self.names[0] = 'world'
+        # Bodies matching fea.exclude_bodies (actuators) receive no rows. A part is a
+        # structural body plus every structural body fixed to it without a joint;
+        # its loads are expressed in its root body's frame.
+        patterns = self.cfg.get('fea', {}).get('exclude_bodies', [])
+        self.excluded = {i for i in self.body_ids if any(fnmatchcase(self.names[i], p) for p in patterns)}
+        self.part_of = {}
+        for body in self.body_ids:
+            parent = int(m.body_parentid[body])
+            if body not in self.excluded:
+                self.part_of[body] = self.part_of[parent] if parent in self.part_of and not m.body_jntnum[body] else body
+        if not self.part_of:
+            raise ValueError('fea.exclude_bodies leaves no structural part to report.')
+        # Per part: its proximal mate (sign +1), then its distal mates (sign -1).
         self.interfaces = []
-        for child in self.body_ids:
-            parent = int(m.body_parentid[child])
-            self.interfaces.append(dict(body_id=child, other_body_id=parent,
-                                        child_id=child, sign=1,
-                                        label=f'{self.names[child]} <- {self.names[parent]}'))
-            if parent:
-                self.interfaces.append(dict(body_id=parent, other_body_id=child,
-                                            child_id=child, sign=-1,
-                                            label=f'{self.names[parent]} <- {self.names[child]}'))
+        for root in dict.fromkeys(self.part_of.values()):
+            name = self.names[root]
+            for child in self.body_ids:
+                parent = int(m.body_parentid[child])
+                for body, other, sign in ((child, parent, 1), (parent, child, -1)):
+                    if self.part_of.get(body) == root and self.part_of.get(other) != root:
+                        self.interfaces.append(dict(body_id=root, other_body_id=other, child_id=child, sign=sign,
+                                                    kind='mate', part=name, label=f'{name} <- {self.names[other]}'))
         shape = (len(self.interfaces), len(METRICS))
         self.minimum = np.full(shape, np.inf)
         self.maximum = np.full(shape, -np.inf)
@@ -79,22 +99,47 @@ class FEARecording:
         if self.active:
             self.events.append(dict(time_s=float(time)-self.start_time, name=name, value=value))
 
-    def capture(self, m, d, row, phase):
-        if not self.active:
-            return
-        mujoco.mj_rnePostConstraint(m, d)
+    def interface_loads(self, m, d):
+        """Local [force, moment] and application point per interface; needs mj_rnePostConstraint first."""
         rotations = d.xmat.reshape((-1, 3, 3))
-        loads, points = [], []
-        for interface in self.interfaces:
+        loads, points = np.zeros((len(self.interfaces), 6)), np.zeros((len(self.interfaces), 3))
+        for i, interface in enumerate(self.interfaces):
             body, child = interface['body_id'], interface['child_id']
             # A hinge's anchor need not equal the child body origin.
             joint = int(m.body_jntadr[child])
             point = d.xanchor[joint] if m.body_jntnum[child] else d.xpos[child]
             reference = d.subtree_com[m.body_rootid[child]]
-            loads.append(local_wrench(interface['sign']*d.cfrc_int[child],
-                                      reference, point, rotations[body]))
-            points.append(rotations[body].T@(point-d.xpos[body]))
-        loads, points = np.asarray(loads), np.asarray(points)
+            loads[i] = local_wrench(interface['sign']*d.cfrc_int[child], reference, point, rotations[body])
+            points[i] = rotations[body].T@(point-d.xpos[body])
+        return loads, points
+
+    def parts(self):
+        """Combined mass, COM and inertia about the COM of each part, in its root body frame."""
+        m = self.model
+        d = mujoco.MjData(m)
+        mujoco.mj_kinematics(m, d)
+        mujoco.mj_comPos(m, d)
+        R, Ri = d.xmat.reshape((-1, 3, 3)), d.ximat.reshape((-1, 3, 3))
+        result = []
+        for root in dict.fromkeys(self.part_of.values()):
+            ids = [b for b, r in self.part_of.items() if r == root]
+            mass = float(m.body_mass[ids].sum())
+            com = m.body_mass[ids]@d.xipos[ids]/mass if mass else d.xpos[root].copy()
+            inertia = np.zeros((3, 3))
+            for b in ids:
+                r = d.xipos[b]-com
+                inertia += Ri[b]@np.diag(m.body_inertia[b])@Ri[b].T + m.body_mass[b]*(r@r*np.eye(3)-np.outer(r, r))
+            result.append(dict(name=self.names[root], body_id=root, bodies=[self.names[b] for b in ids], mass_kg=mass,
+                               com_local_m=(R[root].T@(com-d.xpos[root])).tolist(),
+                               inertia_com_local_kg_m2=(R[root].T@inertia@R[root]).tolist()))
+        return result
+
+    def capture(self, m, d, row, phase):
+        if not self.active or (self.phases and phase.rsplit(': ', 1)[-1] not in self.phases):
+            return
+        mujoco.mj_rnePostConstraint(m, d)
+        rotations = d.xmat.reshape((-1, 3, 3))
+        loads, points = self.interface_loads(m, d)
         velocities, accelerations, external = [], [], []
         for body in self.body_ids:
             velocity, acceleration = np.zeros(6), np.zeros(6)
@@ -148,7 +193,7 @@ class FEARecording:
         for i, interface in enumerate(self.interfaces):
             for j, metric in enumerate(METRICS):
                 low, high = int(self.min_index[i, j]), int(self.max_index[i, j])
-                result.append(dict(interface=interface['label'], body=self.names[interface['body_id']],
+                result.append(dict(interface=interface['label'], body=interface['part'],
                     metric=metric, minimum=float(self.minimum[i, j]), maximum=float(self.maximum[i, j]),
                     min_sample=low, max_sample=high, min_time_s=self.rows[low]['time_s'],
                     max_time_s=self.rows[high]['time_s']))
@@ -156,19 +201,22 @@ class FEARecording:
 
     def metadata(self):
         m = self.model
-        return dict(schema_version=1, mujoco_version=mujoco.__version__,
+        return dict(schema_version=2, mujoco_version=mujoco.__version__,
             start_simulation_time_s=self.start_time, samples=len(self.rows),
             sample_interval_s=float(m.opt.timestep), duration_s=self.duration,
             stop_reason=self.reason, gravity_world_m_s2=m.opt.gravity.tolist(),
-            frame='Each receiving body local frame (URDF link frame for imported bodies).',
+            frame="Each part's root body local frame (URDF link frame for imported bodies); points are from that body's origin.",
             load_order=['Fx_N', 'Fy_N', 'Fz_N', 'Mx_Nm', 'My_Nm', 'Mz_Nm'],
             kinematics_order=['angular_xyz', 'linear_xyz'],
-            convention='Loads act ON body_id FROM other_body_id; moments are about the listed application point.',
+            convention='Mate rows: loads act ON the part (body_id is its root body) FROM other_body_id; moments are about the listed '
+                       'application point, the mate point. Each connection is reported separately, with the proximal mate first.',
             external_loads='external_resultant_at_com_local includes contact/perturbation resultants, excludes gravity. Apply once; do not add duplicate contact loads.',
             inertia='com_acceleration_world is physical acceleration (gravity removed from RNE output). Use inertial body loads consistently for dynamic snapshots.',
             limitations=[
                 'Rigid-body load export, not a structural integrity or fatigue verdict.',
-                'Opposite sides of each interface are alternative receiving-body views; do not apply both to one body.',
+                "Only structural parts are reported. Bodies matching fea.exclude_bodies (actuators) receive no rows; a part's mates with them are kept. "
+                'Structural bodies joined without a joint are one part, in its root body frame (see parts).',
+                'Where two parts mate directly, each has its own view of that mate; apply only the rows of the part being analysed.',
                 'Contact resultants do not retain contact pressure distributions; map to actual contact surfaces in FEA.',
                 'Original generated model bodies aggregate structure, motor housings and any tool/payload. These are assembly loads, not isolated structural-part loads.',
                 'CAD face mapping, support selection, mesh validation and material properties must be supplied in the FEA tool.',
@@ -182,20 +230,25 @@ class FEARecording:
                          mass_kg=float(m.body_mass[i]), com_local_m=m.body_ipos[i].tolist(),
                          principal_inertia_kg_m2=m.body_inertia[i].tolist(),
                          inertial_frame_quaternion_wxyz=m.body_iquat[i].tolist()) for i in self.body_ids],
+            parts=self.parts(), excluded_bodies=[self.names[i] for i in sorted(self.excluded)],
             interfaces=self.interfaces, joints=[j['name'] for j in self.cfg['joints']])
 
-    def export(self, out, kind='all'):
+    def export(self, out, kind='all', name=None, shared_model=None):
         if self.active:
             raise ValueError('Stop recording before exporting.')
         if not self.rows:
             raise ValueError('No FEA samples to export.')
         if kind not in ('all', 'peaks', 'cases'):
             raise ValueError('Unknown FEA export type.')
-        folder = Path(out).resolve() / ('fea-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S-%fZ'))
+        folder = Path(out).resolve() / (name or 'fea-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S-%fZ'))
         folder.mkdir(parents=True)
         (folder/'metadata.json').write_text(json.dumps(self.metadata(), indent=2))
         (folder/'config.yaml').write_text(yaml.safe_dump(self.cfg, sort_keys=False))
-        mujoco.mj_saveModel(self.model, str(folder/'model.mjb'), None)
+        if shared_model is None:
+            mujoco.mj_saveModel(self.model, str(folder/'model.mjb'), None)
+        else:
+            # Same immutable run model, one physical copy; exports still open normally.
+            (folder/'model.mjb').hardlink_to(Path(shared_model).resolve())
         # Original source plus exact compiled model: later URDF edits cannot
         # change the mass properties or live gains in this recording.
         (folder/'source_model.xml').write_text(self.source_xml)
@@ -229,5 +282,5 @@ class FEARecording:
                 row = self.rows[index]
                 for i, interface in enumerate(self.interfaces):
                     writer.writerow([index, row['time_s'], row['phase'],
-                        self.names[interface['body_id']], self.names[interface['other_body_id']],
+                        interface['part'], self.names[interface['other_body_id']],
                         *row['application_points_local_m'][i], *row['loads_local'][i]])

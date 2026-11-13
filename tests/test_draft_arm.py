@@ -75,7 +75,7 @@ def test_j7_rotates_real_cad_link_on_fixed_housing():
 def test_seven_joint_sweep_tracks_with_rs00_caps():
     cfg = deepcopy(load_config(CONFIG))
     cfg['sweep']['a_deg'] = [0.]*7
-    cfg['sweep']['b_deg'] = [10., -15., 15., 20., 10., -10., 90.]
+    cfg['sweep']['b_deg'] = [10., -15., 15., 20., 10., -10., 60.]  # J7 limit is -56° to 70°
     arm, run = run_headless(cfg)
     result = summary(run)
     assert run.complete and result['tracking_ok'], result

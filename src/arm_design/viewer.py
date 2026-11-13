@@ -3,11 +3,17 @@
 # This avoids duplicate Cocoa classes and incompatible window pointers on macOS.
 from imgui_bundle import imgui
 import glfw
+import os
+import sys
+if sys.platform.startswith('linux'):
+    # The bundled GLFW creates GLX contexts. PyOpenGL would otherwise choose EGL
+    # whenever WAYLAND_DISPLAY is set (e.g. WSLg) and see no current context.
+    os.environ.setdefault('PYOPENGL_PLATFORM','glx')
 from OpenGL import GL
+from imgui_bundle.python_backends.opengl_backend_programmable import ProgrammablePipelineRenderer
 import ctypes
 from pathlib import Path
 import subprocess
-import sys
 import time
 import webbrowser
 import yaml
@@ -19,13 +25,16 @@ from .torque_charts import chart_width, draw_torque_charts
 from .fea import METRICS
 
 PANEL_WIDTH = 380
+# The Linux imgui-bundle wheel vendors a private libglvnd, so its native
+# OpenGL2 renderer never sees GLFW's context and uploads no font texture.
+# The PyOpenGL renderer draws through the same system GL as MuJoCo.
+PYTHON_RENDERER = sys.platform.startswith('linux')
 
 
 def open_editor(path):
     if sys.platform == 'darwin':
         subprocess.Popen(['open','-t',str(path)])
     elif sys.platform == 'win32':
-        import os
         os.startfile(str(path))
     else:
         subprocess.Popen(['xdg-open',str(path)])
@@ -54,6 +63,9 @@ class Window:
         self.fea_interface = 0
         self.fea_preview = None
         self.render_model = None
+        self.campaign_path = ''
+        self.campaign_metric = METRICS.index('force_N')
+        self.campaign_pause = True
 
     def render_resources(self, model=None):
         model = self.experiment.arm.model if model is None else model
@@ -131,14 +143,13 @@ class Window:
             imgui.text_wrapped('No samples. Resume simulation during the next recording.')
             return
         imgui.text('Maximum observed loads')
-        imgui.text_wrapped('Forces in N; moments in Nm. Each connection is shown separately in the receiving link frame.')
-        # Put moving links first, retaining fixed motor/tool bodies for their
-        # own structural analyses.
-        primary = list(dict.fromkeys(int(i) for i in recording.model.jnt_bodyid))
-        bodies = primary + [i for i in recording.body_ids if i not in primary]
+        imgui.text_wrapped('Forces in N; moments in Nm, in the part frame. Each connection is shown separately.')
+        # Structural parts only, moving links first.
+        primary = [int(i) for i in recording.model.jnt_bodyid]
+        bodies = sorted(dict.fromkeys(x['body_id'] for x in recording.interfaces), key=lambda i: i not in primary)
         self.fea_body = min(self.fea_body, len(bodies)-1)
         imgui.set_next_item_width(245)
-        changed, self.fea_body = imgui.combo('Link / body', self.fea_body,
+        changed, self.fea_body = imgui.combo('Part', self.fea_body,
                                            [recording.names[i] for i in bodies])
         if changed:
             self.fea_interface = 0
@@ -196,6 +207,58 @@ class Window:
             self.act(e.export_fea, 'all')
         if recording.last_export:
             imgui.text_wrapped('Saved to '+str(recording.last_export))
+
+    def replay(self, peak, side):
+        value = peak['minimum' if side == 'min' else 'maximum']
+        label = f"{side} {peak['metric']} {value:.4g} at {peak['interface']}"
+        self.experiment.replay_sweep(peak[side+'_sweep'], peak[side+'_time_s'] if self.campaign_pause else None, label)
+        self.fea_preview = None
+
+    def campaign_panel(self):
+        e = self.experiment
+        if not imgui.collapsing_header('Campaign replay'):
+            return
+        imgui.begin_disabled(e.busy)
+        if imgui.button('Load latest campaign', (171, 28)): self.act(e.load_campaign)
+        imgui.same_line()
+        if imgui.button('Load folder', (171, 28)): self.act(e.load_campaign, self.campaign_path.strip() or None)
+        imgui.end_disabled()
+        imgui.set_next_item_width(350)
+        _, self.campaign_path = imgui.input_text('##campaign_path', self.campaign_path)
+        imgui.text_disabled(f'Latest searches {e.out.name}/ for this robot.')
+        c = e.campaign
+        if c is None:
+            imgui.text_wrapped('Run arm-sim campaign, then load its fea-* folder to replay the sweep behind each peak.')
+            return
+        s = c['settings']
+        imgui.text_wrapped(f"{c['folder'].name} | {s['counted']} of {s['sweeps']} sweeps counted")
+        imgui.set_next_item_width(170)
+        _, self.campaign_metric = imgui.combo('Load##campaign', self.campaign_metric, list(METRICS))
+        _, self.campaign_pause = imgui.checkbox('Pause at peak', self.campaign_pause)
+        metric = METRICS[self.campaign_metric]
+        peaks = [p for p in c['peaks'] if p['metric'] == metric]
+        imgui.begin_disabled(e.busy)
+        if imgui.begin_table('Campaign peaks', 3, imgui.TableFlags_.borders | imgui.TableFlags_.row_bg):
+            for column in ('Connection', 'Minimum', 'Maximum'):
+                imgui.table_setup_column(column)
+            imgui.table_headers_row()
+            for k, peak in enumerate(peaks):
+                imgui.table_next_row()
+                imgui.table_set_column_index(0)
+                imgui.text(peak['interface'])
+                for column, side in ((1, 'min'), (2, 'max')):
+                    imgui.table_set_column_index(column)
+                    if imgui.small_button(f"{peak['minimum' if side == 'min' else 'maximum']:.4g}##campaign{k}{side}"):
+                        self.act(self.replay, peak, side)
+                    if imgui.is_item_hovered():
+                        sweep = c['sweeps'][peak[side+'_sweep']]
+                        imgui.set_tooltip(f"Replay sweep {peak[side+'_sweep']} ({sweep['duration_s']:.2f} s); "
+                                          f"peak at t={peak[side+'_time_s']:.3f} s")
+            imgui.end_table()
+        imgui.end_disabled()
+        if e.replay:
+            imgui.text_colored((1, .8, .3, 1), f"Replaying sweep {e.replay['sweep']}")
+        imgui.text_wrapped('Click a value to replay its sweep from rest at A. Saved A/B and duration are unchanged.')
 
     def geometry_popup(self):
         imgui.set_next_window_size((540,0))
@@ -351,6 +414,8 @@ class Window:
         imgui.separator()
         self.fea_panel()
         imgui.separator()
+        self.campaign_panel()
+        imgui.separator()
         imgui.begin_disabled(e.busy)
         imgui.set_next_item_width(170)
         changed,value = imgui.input_float('Move duration (s)',e.cfg['sweep']['duration_s'],.5,1,'%.2f')
@@ -457,7 +522,8 @@ class Window:
         imgui.get_style().font_scale_main=1.15
         self.address=ctypes.cast(window,ctypes.c_void_p).value
         imgui.backends.glfw_init_for_opengl(self.address,False)
-        imgui.backends.opengl2_init()
+        renderer = ProgrammablePipelineRenderer() if PYTHON_RENDERER else None
+        if renderer is None: imgui.backends.opengl2_init()
         glfw.set_key_callback(window,self.key)
         glfw.set_cursor_pos_callback(window,self.mouse_move)
         glfw.set_mouse_button_callback(window,self.mouse_button)
@@ -471,7 +537,8 @@ class Window:
             while not glfw.window_should_close(window):
                 now=time.monotonic();credit+=min(.1,now-previous);previous=now
                 glfw.poll_events()
-                imgui.backends.opengl2_new_frame();imgui.backends.glfw_new_frame();imgui.new_frame()
+                if renderer is None: imgui.backends.opengl2_new_frame()
+                imgui.backends.glfw_new_frame();imgui.new_frame()
                 logical_width,logical_height=glfw.get_window_size(window)
                 width,height=glfw.get_framebuffer_size(window)
                 self.panel(logical_height)
@@ -501,7 +568,9 @@ class Window:
                     GL.glClientActiveTexture(GL.GL_TEXTURE0)
                     GL.glDisable(GL.GL_FOG)
                     GL.glDisable(GL.GL_ALPHA_TEST)
-                    imgui.render();imgui.backends.opengl2_render_draw_data(imgui.get_draw_data())
+                    imgui.render()
+                    if renderer: renderer.render(imgui.get_draw_data())
+                    else: imgui.backends.opengl2_render_draw_data(imgui.get_draw_data())
                     glfw.swap_buffers(window)
                 else:
                     imgui.end_frame();glfw.wait_events_timeout(.05)
@@ -516,7 +585,9 @@ class Window:
                         self.experiment.export_fea()
                     except OSError as exc:
                         print(f'Could not save FEA recording on exit: {exc}', file=sys.stderr)
-            imgui.backends.opengl2_shutdown();imgui.backends.glfw_shutdown()
+            if renderer: renderer.shutdown()
+            else: imgui.backends.opengl2_shutdown()
+            imgui.backends.glfw_shutdown()
             imgui.destroy_context()
             self.context.free();self.scene = None
             glfw.destroy_window(window);glfw.terminate()

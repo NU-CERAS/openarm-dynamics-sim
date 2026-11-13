@@ -1,4 +1,5 @@
 """The editable YAML is the single source of model and experiment parameters."""
+from copy import deepcopy
 from pathlib import Path
 import numpy as np
 import yaml
@@ -20,6 +21,9 @@ def positive(value, label, zero=False):
 
 
 def validate(c):
+    if 'analysis_payload' in c:
+        from .payload import validate_payload
+        validate_payload(c['analysis_payload'])
     if c.get('model_type') == 'urdf':
         from .urdf import validate_urdf_config
         validate_urdf_config(c)
@@ -79,6 +83,8 @@ def validate_motion(c):
     vector(c['gravity_m_s2'], 3, 'gravity_m_s2')
     if not 0 < c['drive']['torque_derating'] <= 1:
         raise ValueError('Torque derating must be in (0, 1]')
+    if not isinstance(c['drive'].get('trajectory_feedforward', False), bool):
+        raise ValueError('drive.trajectory_feedforward must be true or false')
     for k in ('speed_envelope', 'gravity_compensation'):
         if not isinstance(c['drive'][k], bool):
             raise ValueError(f'drive.{k} must be true or false')
@@ -99,6 +105,11 @@ def validate_motion(c):
             raise ValueError(f'{k} must be between 0.1 and 120 seconds')
     positive(s['tracking_tolerance_deg'], 'tracking_tolerance_deg')
     positive(s['jog_speed_deg_s'], 'jog_speed_deg_s')
+    # Optional: body-name globs (actuators) that receive no FEA load rows.
+    fea = c.get('fea', {})
+    exclude = fea.get('exclude_bodies', []) if isinstance(fea, dict) else None
+    if not isinstance(exclude, list) or any(not isinstance(p, str) or not p for p in exclude):
+        raise ValueError("fea.exclude_bodies must be a list of body-name patterns, e.g. ['rs*']")
 
 
 def load_config(path=DEFAULT_CONFIG):
@@ -110,6 +121,30 @@ def load_config(path=DEFAULT_CONFIG):
                                    for p in source.get('package_roots', [])]
     validate(c)
     return c
+
+
+def portable(c, path):
+    """Store a sibling URDF relative to its settings file so the file works on any machine."""
+    if c.get('model_type') != 'urdf':
+        return c
+    c = deepcopy(c)
+    try:
+        c['urdf']['path'] = Path(c['urdf']['path']).relative_to(Path(path).resolve().parent).as_posix()
+    except ValueError:
+        pass
+    return c
+
+
+def header(path, default=''):
+    """Leading comment lines; safe_dump preserves values, not comments."""
+    if not Path(path).exists():
+        return default
+    lines = []
+    for line in Path(path).read_text().splitlines():
+        if not line.startswith('#'):
+            break
+        lines.append(line+'\n')
+    return ''.join(lines)
 
 
 def save_sweep(path, sweep):
@@ -148,13 +183,7 @@ def save_controls(path, sweep_updates=None, gains=None, geometry=None):
     if geometry is not None:
         merge_geometry(c,geometry)
     validate(c)
-    # Keep the explanatory header; safe_dump preserves values, not inline comments.
-    header = []
-    for line in path.read_text().splitlines():
-        if not line.startswith('#'):
-            break
-        header.append(line)
-    text = '\n'.join(header) + '\n' + yaml.safe_dump(c, sort_keys=False)
+    text = header(path) + yaml.safe_dump(portable(c, path), sort_keys=False)
     tmp = path.with_suffix('.yaml.tmp')
     tmp.write_text(text)
     tmp.replace(path)

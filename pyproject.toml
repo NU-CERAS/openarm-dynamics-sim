@@ -12,6 +12,7 @@ dependencies = [
   "numpy>=2.1,<2.4", "scipy>=1.14,<2", "PyYAML>=6,<7",
   "matplotlib>=3.9,<4",
   "imgui-bundle==1.92.900",
+  "dash>=3,<5", "plotly>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -26,3 +27,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+
+[tool.setuptools.package-data]
+arm_design = ["assets/*.css", "assets/*.js", "assets/vendor/*.js", "assets/vendor/*.txt"]

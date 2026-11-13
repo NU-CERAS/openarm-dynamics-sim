@@ -1,0 +1,152 @@
+# Right-arm Onshape CAD (same chain as moving_asm, rotated 90 deg about Z); J1/J2: 03, J3/J4: 06, J5/J6/J7: 00.
+# Catalog drive data, 80% torque derating, speed envelope, P/D gains and floor copied from moving_asm.sim.yaml.
+# RS00/RS06 housings use 0.310/0.621 kg with CAD COM and mass-scaled inertia.
+# Hardware limits mapped from moving_asm; J7 axis is reversed here, its +-70 deg range is symmetric.
+# Tool links base/screwon/drumstick use measured 0.151/0.065/0.043 lb with CAD COM and mass-scaled inertia.
+# Tip is the drumstick's tapered striking end on its axis (CAD mesh, -Y end), in the drumstick link frame.
+# fea.exclude_bodies: RobStride housings (rs*) get no FEA load rows; base+screwon+drumstick report as one part (base frame).
+# Joint angles in this file are degrees; URDF uses SI units.
+model_type: urdf
+name: Right arm CAD / RobStride / 7 links
+urdf:
+  path: right_arm_assembly.urdf
+  package_roots: []
+  tip_link: drumstick
+  tip_offset_m:
+  - 0.0
+  - -0.15
+  - 0.1631
+base_xyz_m:
+- 0.0
+- 0.0
+- 0.0
+base_rpy_deg:
+- 0.0
+- 0.0
+- 0.0
+gravity_m_s2:
+- 0.0
+- 0.0
+- -9.81
+motors:
+  '03':
+    mass_kg: 0.88
+    diameter_m: 0.106
+    depth_m: 0.056
+    rated_torque_nm: 20.0
+    peak_torque_nm: 60.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 195.0
+    gear_ratio: 9.0
+    source: https://robstride.com/products/robStride03
+  '06':
+    mass_kg: 0.621
+    diameter_m: 0.088
+    depth_m: 0.049
+    rated_torque_nm: 11.0
+    peak_torque_nm: 36.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 480.0
+    gear_ratio: 9.0
+    source: https://robstride.com/products/robStride06
+  '00':
+    mass_kg: 0.31
+    diameter_m: 0.057
+    depth_m: 0.051
+    rated_torque_nm: 5.0
+    peak_torque_nm: 14.0
+    rated_speed_rpm: 100.0
+    no_load_speed_rpm: 315.0
+    gear_ratio: 10.0
+    source: https://robstride.com/products/robStride00
+joints:
+- name: revolute_1
+  type: continuous
+  motor: '03'
+  limits_deg:
+  - -180.0
+  - 180.0
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+- name: revolute_2
+  type: revolute
+  motor: '03'
+  limits_deg:
+  - -20.0
+  - 200.0
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+- name: revolute_3
+  type: continuous
+  motor: '06'
+  limits_deg:
+  - -180.0
+  - 180.0
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+- name: revolute_4
+  type: revolute
+  motor: '06'
+  limits_deg:
+  - -135.0
+  - 135.0
+  kp_nm_rad: 120
+  kd_nm_s_rad: 12
+- name: revolute_5
+  type: continuous
+  motor: '00'
+  limits_deg:
+  - -180.0
+  - 180.0
+  kp_nm_rad: 60
+  kd_nm_s_rad: 5
+- name: revolute_6
+  type: revolute
+  motor: '00'
+  limits_deg:
+  - -90.0
+  - 50.0
+  kp_nm_rad: 60
+  kd_nm_s_rad: 5
+- name: revolute_7
+  type: revolute
+  motor: '00'
+  limits_deg:
+  - -70.0
+  - 70.0
+  kp_nm_rad: 60
+  kd_nm_s_rad: 5
+drive:
+  torque_derating: 0.8
+  speed_envelope: true
+  gravity_compensation: true
+simulation:
+  step_s: 0.001
+  contacts: false
+  floor_z_m: -0.742
+fea:
+  exclude_bodies:
+  - rs*
+sweep:
+  a_deg:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  b_deg:
+  - 90.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  duration_s: 3.0
+  approach_s: 2.0
+  settle_s: 1.0
+  hold_s: 1.0
+  tracking_tolerance_deg: 5.0
+  jog_speed_deg_s: 30.0

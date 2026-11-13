@@ -3,11 +3,12 @@
 # RS00/RS06 housings use 0.310/0.621 kg with CAD COM and mass-scaled inertia.
 # The real part_7 mesh and mass/inertia are retained; no placeholder tool is added.
 # Reported tip defaults to the part_7 link origin; set tip_offset_m for a measured tool-tip point.
+# fea.exclude_bodies: RobStride housings (rs*) get no FEA load rows; only part_1..part_7 mates and deltas are reported.
 # Joint angles in this file are degrees; URDF uses SI units.
 model_type: urdf
 name: CAD arm / RobStride / 7 links
 urdf:
-  path: /Users/bradylin/Documents/Projects/Club & Lab/openarm-dynamics-sim/robots/moving_asm/urdf/moving_asm.urdf
+  path: moving_asm.urdf
   package_roots: []
   tip_link: part_7
   tip_offset_m:
@@ -67,11 +68,11 @@ joints:
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_2
-  type: continuous
+  type: revolute
   motor: '03'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -20.0
+  - 200.0
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_3
@@ -83,11 +84,11 @@ joints:
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_4
-  type: continuous
+  type: revolute
   motor: '06'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -135.0
+  - 135.0
   kp_nm_rad: 120
   kd_nm_s_rad: 12
 - name: revolute_5
@@ -99,19 +100,19 @@ joints:
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 - name: revolute_6
-  type: continuous
+  type: revolute
   motor: '00'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -90.0
+  - 50.0
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 - name: revolute_7
-  type: continuous
+  type: revolute
   motor: '00'
   limits_deg:
-  - -180.0
-  - 180.0
+  - -56.0
+  - 70.0
   kp_nm_rad: 60
   kd_nm_s_rad: 5
 drive:
@@ -122,6 +123,9 @@ simulation:
   step_s: 0.001
   contacts: false
   floor_z_m: -0.742
+fea:
+  exclude_bodies:
+  - rs*
 sweep:
   a_deg:
   - 0.0

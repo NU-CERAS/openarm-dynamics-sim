@@ -6,8 +6,9 @@ from xml.etree import ElementTree as ET
 import mujoco
 import numpy as np
 import pytest
+import yaml
 
-from arm_design.config import load_config
+from arm_design.config import ROOT, load_config
 from arm_design.experiment import Experiment
 from arm_design.model import build_arm
 from arm_design.reporting import save_result, summary
@@ -99,6 +100,25 @@ def test_saved_poses_gains_reload_and_geometry_guard(tmp_path):
     with pytest.raises(ValueError, match='Invalid URDF XML'):
         again.load()
     assert again.arm is old
+
+
+def test_settings_are_portable_and_keep_their_comments(tmp_path):
+    (tmp_path/'a').mkdir()
+    path = robot_file(tmp_path/'a')
+    settings = prepare_urdf_config(path)
+    assert yaml.safe_load(settings.read_text())['urdf']['path'] == 'robot.urdf'
+    settings.write_text('# Curated notes.\n'+settings.read_text().split('\n', 2)[2])
+    Experiment(settings, tmp_path/'reports').save_settings()
+    assert settings.read_text().startswith('# Curated notes.\nmodel_type: urdf')
+    # Another checkout location: nothing to rewrite, and the URDF still resolves.
+    moved = (tmp_path/'a').rename(tmp_path/'b')
+    saved = (moved/'robot.sim.yaml').read_text()
+    assert load_config(prepare_urdf_config(moved/'robot.urdf'))['urdf']['path'] == str(moved/'robot.urdf')
+    assert (moved/'robot.sim.yaml').read_text() == saved
+    curated = ROOT/'robots/moving_asm/urdf/moving_asm.sim.yaml'
+    before = curated.read_text()
+    prepare_urdf_config(curated.with_name('moving_asm.urdf'))
+    assert curated.read_text() == before
 
 
 def test_continuous_joint_window_and_effort_cap(tmp_path):

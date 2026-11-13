@@ -11,6 +11,47 @@ Install Python 3.13 (`brew install python@3.13` on macOS), then run from the pro
 
 For later launches, just run `./scripts/start.sh`.
 
+`setup.sh` creates `.venv` (set `PYTHON_BIN` to use another interpreter than
+`python3.13`) and does an editable install with the dev extras, pinned by
+`requirements-lock.txt`. `start.sh [--urdf robot.urdf ...]` runs the GUI viewer, the
+same as `arm-sim view`; extra arguments pass straight through.
+
+**Windows:** both scripts are bash and detect `.venv/Scripts/python.exe`, so they run
+from Git Bash. If `python3.13` is not on your PATH there, use `PYTHON_BIN` (for
+example `PYTHON_BIN=python ./scripts/setup.sh`). To do it by hand in PowerShell:
+
+```powershell
+py -3.13 -m venv .venv
+.venv\Scripts\python -m pip install -c requirements-lock.txt -e ".[dev]"
+.venv\Scripts\arm-sim view            # the viewer
+.venv\Scripts\arm-sim sweep --out results\x
+```
+
+The command examples below use the POSIX `.venv/bin/arm-sim`; on Windows write
+`.venv\Scripts\arm-sim` (Git Bash accepts `.venv/Scripts/arm-sim`). `arm-sim --help`
+lists every flag.
+
+## Command overview
+
+Every command takes `--urdf robot.urdf` (imported robot) or `--config file.yaml`
+(default `configs/arm.yaml`, the built-in arm); the two are mutually exclusive.
+`--package-root` (repeatable) requires `--urdf`. `--out` sets the output folder
+(default `results/`, gitignored).
+
+| Command | Use it to | Writes under `--out` |
+| --- | --- | --- |
+| `view` (default) | jog, save poses A/B, run sweeps, record loads (GUI) | timestamped sweep folders, `fea-*` |
+| `sweep` | run the saved A -> B (or B -> A) move without a window | `<stamp>/` with `report.html`, CSV, PNG, YAML and MJCF snapshots |
+| `export` | write the generated MJCF | `arm.xml` |
+| `campaign` | find worst-case dynamic loads over many sweeps | `fea-*/`, `campaign-progress.csv` |
+| `watch` | plot a running or finished campaign's convergence | nothing |
+| `bounds` | static gravity, blocked-tip and (optional) clamped-tip loads, in seconds | `bounds-*/` |
+| `fea-cases` | print a ready-to-enter FEA setup for one part | `fea_setup_<part>.csv` in each export |
+
+Tests: `.venv/bin/pytest` (or `tests/test_urdf.py::test_name` for one). The suite
+takes about 1-4 minutes because campaign tests run real sweeps. A stray
+`MUJOCO_LOG.TXT` in the repo root is harmless test output; delete it.
+
 ## Import your own URDF
 
 Place your exported robot in **`robots/my_robot/`**, keeping the URDF and its mesh
@@ -106,7 +147,8 @@ The saved `moving_asm.sim.yaml` includes the original
 P/D gains. URDF effort limits contain the peak torques; velocity limits contain
 the no-load speeds in rad/s. Mesh references use the sibling `meshes/` directory.
 Keep this curated `.sim.yaml` to retain the rated/peak distinction and drive settings.
-All seven joints are continuous. J7 rotates the real `part_7` CAD link on the
+J1, J3 and J5 are continuous. J2 (−20° to 200°), J4 (±135°), J6 (−90° to 50°)
+and J7 (−56° to 70°) are revolute with the real hardware limits. J7 rotates the real `part_7` CAD link on the
 `rs00_1` actuator; its housing stays fixed to `part_6`. The exported joint origins,
 axes, link geometry, and `part_7` mass/inertia are retained. The seventh link weighs
 **0.427991 kg**. No placeholder tool is added. The report's tracked point is the
@@ -117,6 +159,20 @@ housings use 0.621 kg each. Their CAD COMs are retained and inertias are scaled
 proportionally to mass (a uniform-density approximation). Other CAD inertias/masses
 are retained. Total simulated mass, including the real seventh link, is **7.446340 kg**.
 The original generated arm in `configs/arm.yaml` also uses 00 drives at J5–J7.
+
+> **Self-collision:** links never collide in the physics (the CAD meshes are
+> visual-only and contacts are off). Within the joint limits, about 4% of random
+> poses put one part inside another, mostly `part_7` against `part_5` at certain
+> wrist angle combinations. Per-joint limits cannot exclude these; the campaign's
+> self-collision check (below) rejects them.
+
+### Right-arm drumstick CAD
+
+`robots/right_arm_assembly/urdf/right_arm_assembly.urdf` imports the same way
+(`./scripts/start.sh --urdf robots/right_arm_assembly/urdf/right_arm_assembly.urdf`).
+Its `.sim.yaml` excludes the `rs*` actuators from load rows; `base`, `screwon` and
+`drumstick` report as the single part `base`, and a massless wrapper part `body_1`
+carries the mount reaction (`body_1 <- world`). See "Loads for FEA" below.
 
 ### Run both arm models
 
@@ -182,7 +238,65 @@ Charts: one per joint, top to bottom (scroll for larger robots). Yellow = nomina
 
 Camera: drag to rotate, right-drag to pan, scroll to zoom.
 
-### FEA data collection
+Keyboard (when no text box has focus): **1-9** select a joint, **Up/Down** jog it
+2 degrees, **A / B** save the current pose as A / B, **Enter** run the A -> B sweep,
+**[ / ]** change move duration by 0.5 s, **Space** pause/resume, **X** stop,
+**P** open the last report, **E** edit the YAML, **F5** reload, **F8** save settings,
+**Esc** quit.
+
+Headless equivalent of the sweep buttons (saves the same report folder; exits with
+status 2 if tracking exceeds tolerance):
+
+```bash
+.venv/bin/arm-sim sweep --out results/x [--duration 2] [--direction b-to-a]
+```
+
+It writes a timestamped folder under `--out` with `report.html`, the sampled CSV,
+a PNG of the charts, the config snapshot and the MJCF; the last line printed is the
+`report.html` path. `--duration` overrides `sweep.duration_s` for that run only.
+`.venv/bin/arm-sim export --out results/x` writes only the generated MJCF as
+`results/x/arm.xml`.
+
+## Loads for FEA
+
+### How loads are reported
+
+All load tools (window recorder, `campaign`, `bounds`) use the same convention.
+Loads are reported **per structural part**, not per MuJoCo body:
+
+- **Actuators get no rows.** Bodies whose names match a glob in `fea.exclude_bodies`
+  (in the config YAML; `['rs*']`, the RobStride housings, in both checked-in
+  `.sim.yaml` files; empty by default, which makes every body a part) are actuators.
+  They receive no load rows, but a link's mates with them are kept: the load a link
+  carries from `rs03output` is a load on the link.
+- **Fixed-joined parts merge.** Structural bodies joined with no joint become one
+  part automatically. In the right arm, `base + screwon + drumstick` is the single
+  part `base`, with combined mass, COM and inertia, and its loads are in `base`'s
+  frame. The right-arm import also reports a massless wrapper part `body_1`;
+  `body_1 <- world` is the mount reaction.
+- **Rows** are labelled `<part> <- <other>`, one per mate: the proximal mate (toward
+  the base) first, e.g. `l2 <- rs03output`, then distal ones, e.g. `l2 <- rs06_1`.
+  Each row has Fx, Fy, Fz, Mx, My, Mz **acting on the part**, at the mate point, in
+  the part's root-body frame (N, Nm, m), plus the magnitudes `force_N` and
+  `moment_Nm`.
+
+These are observed rigid-body loads, not stress or deflection. Each wrench is a
+simultaneous snapshot, so never combine extrema from different samples into one
+load case.
+
+### Which result governs what
+
+- **`bounds` blocked** governs static strength (tip blocked, motors at peak torque,
+  capped by `--max-contact-force-n`). With `--max-contact-moment-nm`, **clamped**
+  adds a gripped tip that also reacts a moment; it mainly raises the distal links.
+- **`bounds` gravity** is the everyday baseline and the fatigue **mean** load.
+- **`campaign`** shows whether dynamics matter (for the CAD arm they do not: about
+  1.5-3x gravity, below a 100 N tip contact), gives a conservative fatigue **range**,
+  and motor/speed limits. Do not chase campaign convergence; rerun it when payload,
+  geometry, gains or motors change. Dashboard runs can add a test payload to the CAD arm;
+  a separate gripper mechanism is not modeled.
+
+### FEA data collection (window)
 
 Expand **FEA data collection tools** in the left panel. Click **Start recording**,
 then jog, use Go to A/B, or run either sweep. Click **Stop recording** to inspect
@@ -190,42 +304,44 @@ the results; this stops data capture, not arm motion. Pause/Resume suspends/resu
 sampling with simulation time. Data is captured every physics step (1,000 Hz with
 the saved 1 ms timestep), independently of the live torque charts.
 
-Select a **Link / body** and **Connection** to inspect signed minimum/maximum
-Fx/Fy/Fz and Mx/My/Mz, plus force and moment magnitudes. Values use the receiving
-body's local axes. Click a peak to pause motion and preview its recorded pose
-without changing the live simulation state. **Select load case** keeps that
-complete timestamp for export. **Return to live pose** exits inspection; Resume
+Select a **Part** and **Connection** to inspect
+signed minimum/maximum Fx/Fy/Fz and Mx/My/Mz, plus force and moment magnitudes.
+Values use the part's root-body axes. Click a peak to pause motion and preview its
+recorded pose without changing the live simulation state. **Select load case** keeps
+that complete timestamp for export. **Return to live pose** exits inspection; Resume
 also exits inspection and resumes the live arm.
 
 Exports are saved under the output folder in a timestamped `fea-*` directory:
 
-- **Peak summary:** `peaks.csv` with extrema and their timestamps.
-- **Load cases:** `load_cases.json` contains complete simultaneous states and
-  all interface loads; `load_cases.csv` contains their local forces, moments,
-  and application points. With no selection, all distinct extrema timestamps
+- **Export peak summary:** `peaks.csv` with extrema and their timestamps.
+- **Export all peak load cases / selected load cases:** `load_cases.json` contains
+  complete simultaneous states and all rows; `load_cases.csv` contains their forces,
+  moments and application points. With no selection, all distinct extrema timestamps
   are exported. With selections, those selected timestamps are exported.
-- **Full recording:** also includes `history.jsonl` (one complete state per line)
-  and `interface_loads.csv` (one receiving-body interface per sample).
+- **Export full recording + load cases:** also includes `history.jsonl` (one complete
+  state per line) and `interface_loads.csv` (one row per part mate per sample).
 
-Every export includes `metadata.json` with units, frames, mass/inertia, interface
-definitions, recording checks and limitations; a configuration snapshot; the exact
-compiled `model.mjb`; and `source_model.xml`. The compiled model preserves live
-controller gains. Source XML is the model's original build source; use the compiled
-model/configuration snapshot for the exact recorded settings.
+In the CSVs `body` is the part and `other_body` is the mate.
+In `peaks.csv`, `min_sample`/`max_sample` refer to each sample's `sample_index`
+field, not its position in `load_cases.json`; look samples up by `sample_index`.
 
-**These are observed rigid-body loads, not stress or deflection results.** Each
-interface is represented on both receiving bodies with opposite forces; use only
-the loads acting on the body you are analyzing. Moments are about the listed
-application points. Gravity and physical COM/angular accelerations are supplied
-for consistent inertial loading. Contact/perturbation resultants are exported
-separately at each body's COM; they do not specify contact pressure distributions.
-CAD surface mapping, supports, materials and mesh checks remain FEA tasks.
+Every export also includes `metadata.json` (`schema_version` 2: units, frames, mass
+and inertia, row definitions, recording checks, limitations, plus `parts` with each
+part's combined mass/COM/inertia and `excluded_bodies`), a configuration snapshot
+(`config.yaml`), the exact compiled `model.mjb`, and `source_model.xml`. The compiled
+model preserves live controller gains. Source XML is the model's original build
+source; use the compiled model/configuration snapshot for the exact recorded settings.
 
-The imported CAD arm preserves fixed motor attachments and individual `part_*`
-bodies. The original generated model aggregates each structure with its attached
-motor housing and any tool/payload; its exported body loads describe that assembly,
-not an isolated machined linkage. Do not combine component extrema from different
-times into one load case.
+Moments are about the listed application points. Gravity and physical COM/angular
+accelerations are supplied for consistent inertial loading. Contact/perturbation
+resultants are exported separately at each body's COM; they do not specify contact
+pressure distributions. CAD surface mapping, supports, materials and mesh checks
+remain FEA tasks.
+
+The imported CAD arms keep each `part_*` link separate from its RobStride housing
+(the housing is excluded from rows, its mates stay). The original generated model
+aggregates each structure with its attached motor housing and any tool/payload; its
+exported loads describe that assembly, not an isolated machined linkage.
 
 Changing geometry or reloading ends the current recording and retains its data.
 Controller gain edits are disabled while recording. A capacity limit (displayed
@@ -233,8 +349,439 @@ in the panel, sized by model complexity) stops recording without dropping earlie
 samples. Export before **New recording (replace)** if you want to retain the old
 recording. Closing the window saves an unexported recording automatically.
 
-For a reverse headless torque sweep:
+### Worst-case loads across sweeps (`campaign`)
+
+To find the largest part loads that any A -> B sweep can produce, run a campaign.
+It ignores saved A/B poses and runs random start/end poses within the
+joint limits with log-uniform move durations. Next it refines the worst sweep found
+for the force and moment magnitude of **every connection**:
 
 ```bash
-.venv/bin/arm-sim sweep --direction b-to-a
+.venv/bin/arm-sim campaign --samples 200 --iterations 20 --min-duration 0.1 --max-duration 5
+.venv/bin/arm-sim campaign --urdf robots/moving_asm/urdf/moving_asm.urdf --out results/cad-campaign
 ```
+
+Options: `--samples` random sweeps (default 200), `--iterations` refinement sweeps per
+row and magnitude (default 20), `--min-duration/--max-duration` (0.1 / 5 s), `--seed`
+(repeatable runs), `--workers` (spawned worker processes, default CPU count),
+`--include-failed`, `--max-overlap-mm`, `--allow-self-collision`, `--live`. It prints
+a table of each row's maximum force and moment and the sweeps that set them, then the
+output folder. The run takes minutes; the sweep count grows with the number of rows.
+
+Each sweep starts at rest at A, settles, sweeps and holds. Only the sweep and hold
+are measured. By default a sweep counts only if it tracks within
+`sweep.tracking_tolerance_deg`. Commands the motors cannot follow end in
+joint-stop impacts, whose loads depend on MuJoCo's constraint softness, not on the
+drives. `--include-failed` counts them anyway; leave it off for design loads.
+
+The campaign rejects self-colliding motion. A copy of the model with every
+geom colliding (CAD meshes as convex hulls, plus the floor) checks each random
+A -> B path before simulating it, then the simulated motion every 5 ms, which
+catches overshoot. Colliding paths are redrawn and colliding sweeps are stopped
+and never counted. Body pairs touching in the zero pose are treated as designed
+overlaps and ignored. `--max-overlap-mm` (default 0) allows small overlaps; hulls are
+conservative, so 1-2 mm accepts near-misses they misjudge. `--allow-self-collision`
+turns the check off. Contacts never act in the physics, so loads are unchanged.
+
+The result is an `fea-*` folder in the same format as the window's export:
+`peaks.csv` (each row's extrema plus `min_sweep`/`max_sweep`), `load_cases.json/csv`
+(the complete simultaneous state at every extremum), `metadata.json`, `model.mjb`,
+`sweeps.csv` (every sweep's A/B poses, duration, tracking result and any collision),
+`campaign.json` (settings) and `convergence.csv`. These are the largest loads the
+search **found**, not a proven global maximum. Jogging and Go to A/B moves are not
+searched.
+
+**Convergence.** While it runs, the campaign appends to `<out>/campaign-progress.csv`
+(one line per 10 counted sweeps plus a final one), copied into the export as
+`convergence.csv`. Columns: `counted,sweeps,elapsed_s,stage`, then for each row and
+objective `<label>|force_N` and `<label>|force_N|Fx_N` ... `|Mz_Nm` (the full wrench
+of the sample that set that peak), and likewise for `moment_Nm`.
+
+Add `--live` to the campaign, or run `arm-sim watch` on its own, to open a plot
+window (it blocks until closed):
+
+```bash
+.venv/bin/arm-sim campaign --samples 200 --iterations 20 --live
+.venv/bin/arm-sim watch [--results <campaign-progress.csv, convergence.csv or folder>]
+```
+
+`watch` opens the newest progress or convergence CSV under `--results` (default
+`--out`), running or finished. Left: peak force, peak moment and largest-rise panels,
+one colour per part (solid = proximal mate, dashed = distal). Right:
+two tables with the Fx..Mz record state at each peak force and peak moment. When the
+peaks stop rising, more sampling is not buying you anything.
+
+**Campaign replay (window).** To watch the sweeps behind the peaks, open the viewer
+for the same robot (`./scripts/start.sh`, with `--urdf` if the campaign used it) and
+expand **Campaign replay**. **Load latest campaign** finds the newest campaign for
+this robot anywhere under the output folder; **Load folder** opens the `fea-*` path
+typed below it. Choose a load (`force_N`, `moment_Nm`, Fx...Mz) to list each mate's
+campaign minimum and maximum. Click a value to replay the sweep that
+produced it. The replay starts at rest at A, exactly as in the campaign, and with
+**Pause at peak** it stops on the step where that peak occurred; Resume finishes
+the sweep and saves its usual report. Replays never change your saved A/B or move
+duration. Loading warns if the model, drive or gain settings differ from the
+campaign's, because the replay uses the live model.
+
+### Static bounding loads (`bounds`)
+
+The campaign measures loads during successful sweeps. Structural design must also
+cover events it excludes on purpose. `bounds` computes two static load cases (three
+with `--max-contact-moment-nm`) that need no random sweeps. **Always pass
+`--max-contact-force-n`:**
+
+```bash
+.venv/bin/arm-sim bounds --max-contact-force-n 200
+.venv/bin/arm-sim bounds --urdf robots/moving_asm/urdf/moving_asm.urdf --max-contact-force-n 200 --out results/cad-bounds
+.venv/bin/arm-sim bounds --urdf robots/moving_asm/urdf/moving_asm.urdf --max-contact-force-n 100 --max-contact-moment-nm 10
+```
+
+- **gravity:** the arm holding a pose against gravity alone, searched for the worst
+  pose of every row.
+- **blocked:** an obstacle stops the tool tip while the motors push. The obstacle
+  force is tangent to one joint's rotation and as large as every motor can resist
+  at full peak torque (`--derated` uses the YAML derating), capped at
+  `--max-contact-force-n`. `--contacts all` also blocks every moving body origin
+  (a pinch along the arm), and `--min-lever-m` (default 0.05 m) skips points
+  closer than that to the blocked joint's axis.
+- **clamped** (only with `--max-contact-moment-nm`, which needs
+  `--max-contact-force-n` too): the tip grips a fixed object, so it reacts a force
+  and a moment in any direction. The search covers load directions as well as
+  poses; each load is the largest along its direction that every motor can hold
+  (several may sit at their caps at once), with |F| and |M| within the two caps. It
+  is static, not "all motors at max". Results scale with both caps: take the moment
+  cap from the wrist motors' torque or the gripper's slip limit. Always at the tip,
+  even with `--contacts all`.
+
+Set `--max-contact-force-n` to a design value: a requirement, collision-detection
+threshold or tip-force rating. Without it, aligned poses (like a straight arm
+pressing on a table, or a toggle clamp) let small torques resist huge forces, so
+the blocked loads have no real ceiling and grow with more sampling (the command
+prints a warning). Blocked loads scale almost linearly with the cap (about cap +
+weight in force, cap x reach in moment). For reference, the CAD arm's motors resist
+a median of about 200 N at the tip across random poses and directions, and about
+125 N in its weakest direction at full reach.
+
+All cases reject self-colliding poses (`--max-overlap-mm`, `--allow-self-collision`)
+and poses a motor cannot hold. They start with `--samples` random poses (default
+2000; clamped also scores 12 random load directions per pose), then refine each
+row's worst force and moment over `--iterations` poses (default 300; clamped
+perturbs the load direction too); `--workers` and `--seed` apply. The run takes
+seconds. Results go to `bounds-*/gravity/`, `bounds-*/blocked/` and, if enabled,
+`bounds-*/clamped/`, each in the usual load-case format (`peaks.csv`,
+`load_cases.*`, `metadata.json`, `model.mjb`; blocked and clamped samples also list
+the contact body, point and force, clamped ones the contact moment too).
+`bounds-*/summary.csv` compares them and `bounds.json` records the settings and
+assumptions. Combine these with the campaign's dynamic peaks and apply your safety
+factor. Velocities and accelerations are zero in every case.
+
+### Setting up a part in FEA (`fea-cases`)
+
+`fea-cases` turns any load-case export (a campaign `fea-*` folder, a `bounds-*`
+folder, or one of its `gravity`/`blocked`/`clamped` subfolders) into ready-to-enter FEA setups
+for one structural part:
+
+```bash
+.venv/bin/arm-sim fea-cases --results results/cad-bounds/bounds-<stamp> --part part_3
+```
+
+`--part` is a structural part name from the export's `metadata.json` `parts` list
+(for the right arm, `base` is the merged `base + screwon + drumstick`; `screwon`,
+`drumstick` and `rs*` actuators are rejected with a list of valid parts). Exports
+from before the per-part change (schema 1) are refused: rerun the campaign or bounds.
+
+For each worst case of that part's mates (peak force and moment magnitudes;
+`--all-extremes` adds every Fx...Mz extreme), it prints:
+
+- **FIX:** the mate to constrain, by default the proximal one (toward the base;
+  `--fixed <other body>` picks another, e.g. `rs06_1`). Its load is listed only as
+  a check: FEA computes that reaction.
+- **APPLY:** a remote force and moment from each other mate, about the listed
+  point, plus any contact force (and, clamped, moment) acting on this part.
+- **BODY:** the part's mass and the acceleration field to apply (gravity minus the
+  COM acceleration), plus angular velocity and acceleration for moving cases.
+- **Force balance residual:** should be about zero; it confirms the case and frames
+  are consistent.
+
+Everything is in the part's root-body frame (the URDF/CAD part frame), in N, Nm and
+m. Each case is one instant, so never combine rows from different samples. The same
+table is saved as `fea_setup_<part>.csv` in each export folder.
+
+## Load Lab: distributions, restrained torque tests, and interactive FEA inspection
+
+Start the local dashboard (install/update dependencies with `./scripts/setup.sh` first):
+
+```bash
+.venv/bin/python -m arm_design.cli dashboard
+# Open http://127.0.0.1:8050
+```
+
+The dashboard browses `results/` recursively; `--results /path/to/results` selects another
+root, and `--port` changes the localhost port. It runs locally, without hosting or an
+account. Click a link at the top of the page to scope all displayed loads to that part. The first FEA row shows signed component limits at the loaded mounting connection,
+assuming the proximal mount is supported. Each minimum/maximum is an independent extreme.
+Running extrema include both connections. Connection, stage, validity, histogram weighting
+and signed-extreme selection are managed automatically. Free motion uses accepted random
+trials weighted by simulated time; Restrained uses accepted enumeration trials weighted
+by trial peaks. Clicking an FEA value selects its loaded connection and signed extreme.
+The selected link persists when switching runs if it exists in the new model.
+
+The signed-force and signed-moment charts show each connection's observed minimum
+and maximum for X, Y and Z around a visible zero line, with signed numerical labels.
+Use the **Histogram & running extremes · load component** dropdown directly above
+the two charts to select Fx/Fy/Fz or Mx/My/Mz (default Fx). Both charts
+follow this selection in free-motion and restrained runs. Running extremes show
+minimum/maximum curves. Restrained trial peaks default to the largest absolute component
+while retaining its sign; clicking an FEA minimum or maximum selects that statistic.
+Bin filtering uses the same statistic. Press Esc to clear a histogram-bin filter.
+
+Hover or keyboard-focus a minimum/maximum in the FEA table for a compact signed
+histogram, an approximate median, and a P5–P95 range estimated from the saved bins.
+Click the value to select its component and loaded connection, scroll to the larger
+histogram, and mark the selected extreme. With **One peak per trial**, a minimum
+cell previews each trial's minimum and a maximum cell previews each trial's maximum;
+clicking also selects that statistic. Signed histograms have separate negative and
+positive/zero panels using logarithmic bins. Both panels share a percentage scale
+and the full-distribution denominator, so their percentages together total 100%.
+These distributions describe test coverage, not real-world operating frequency.
+
+The compact 3D viewer shows only the selected link's actual mesh, named mate points,
+and local XYZ axes. It uses the run's saved `model.mjb`, including mesh-centering,
+geom placement, and fixed merged-body transforms. Mate points use the same hinge
+anchors and local-frame transforms as the load exporter. Rotate or zoom to inspect
+the mates; hover to read their coordinates. Red/green/blue mark X/Y/Z. Recreate this
+coordinate frame in CAD; CAD global axes are not assumed to match.
+
+Click a histogram bin to find contributing trials, then select a trial for its history.
+Click **Play trial** below the explorer to replay that trial's recorded whole-arm
+motion in the dashboard. The selected link is teal; the adjacent readout shows its
+mates' signed Fx/Fy/Fz and Mx/My/Mz at the displayed timestamp. Use play/pause,
+restart, the timeline, and 0.1–2× speed; drag the model to rotate or scroll to zoom.
+**Jump to peak load** pauses at the selected connection/component's minimum,
+maximum, or largest absolute value, following the signed-peak selector. Magnitudes
+always use their maximum. Saved extreme snapshots are included even when a reduced
+trace omitted that sample. Animation is sampled at about 60 recorded poses/second
+(at most 901 poses including the peak); values are never interpolated or recomputed.
+Trials without saved motion/model files show an unavailable message. Rejected trials
+are labeled and remain viewable. Changing the trial or load selection clears playback;
+ordinary live campaign refreshes preserve it. The viewer and its Three.js 0.170.0
+dependency are served locally; no external service is used during playback.
+Simultaneous load cases and CSV exports remain in each run's recorded FEA export.
+Independent extrema in the overview must not be combined into one FEA case.
+
+`body_1` is the mount; the dashboard preserves the model's actual names.
+Whole-arm campaign replay remains available separately through the `replay` CLI.
+
+The top **Runner** and **Viewer** tabs separate test execution from result inspection.
+Viewer retains the FEA tables, link meshes, histograms and trial playback. In Runner,
+choose Free motion or Restrained, set its maximum trial count and payload, then press
+**Start test**. Settings lock while that mode's dashboard test is active, and returning
+to its mode restores the submitted settings. Each mode remembers its own
+trial limit; one dashboard worker per mode can run at a time. Free motion defaults
+to aggressive duration search, with random sweep durations also available. Restrained
+runs enumerate up to `poses × 3^7` combinations; a lower cap stops enumeration early.
+The cap counts attempted trials, including rejected trials. Dashboard campaigns add
+no refinement or finer-timestep reruns beyond this cap. CLI aggressive runs still do
+the finer-step validation by default (`--skip-timestep-validation` disables it).
+
+**Additional payload mass (kg)** adds mass to the existing modeled end effector;
+zero preserves the original model. The default is a uniform 5 cm box. On the right-arm
+drumstick its center is 150 mm from the striking tip toward the grip: tip-local offset
+`[0, 0.15, 0]` m, or drumstick-local position `[0, 0, 0.1631]` m. Other robots default
+to the tip. Advanced settings provide its XYZ dimensions, COM offset from the tip in
+tip-link local axes, and optional COM inertia `[Ixx,Iyy,Izz,Ixy,Ixz,Iyz]` in kg·m².
+The box defines collision geometry even with custom inertia. The payload affects
+gravity, dynamic inertia, collision checks, recorded loads and replay. It does not
+move the restrained clamp point. Every run saves a separate configuration and model;
+changing the controls never changes previous runs or the source robot YAML.
+
+Runner shows trial progress, accepted/rejected counts and elapsed time. Its component
+selector switches between Fx/Fy/Fz and Mx/My/Mz. Each link has a color: solid curves
+show running maxima, dashed curves running minima, at the same connection used by
+its FEA table. The table shows the latest completed trial and accepted overall
+extremes; new overall records briefly highlight. Rejected latest-trial values are
+labeled and never contribute to accepted records. Updates reflect completed trials,
+not instantaneous timesteps. Runner keeps tracking its own test while Viewer browses
+other runs. **View results** opens the monitored run in Viewer, including partial data.
+
+Enable **Live arm preview · one worker** in Runner to see a sampled 3D view beside
+the running-extremes chart. One simulation worker publishes its current joint angles
+at most five times per wall-clock second; meshes load once per run, and the browser
+computes transforms and interpolates motion at up to 30 frames/s. The label identifies
+the worker, phase and simulated time. This is a sampled preview, not every physics
+timestep, and a parallel worker can be ahead of the latest collected results.
+Drag to orbit, scroll to zoom, or use **Reset view**. Rendering and polling pause when
+the preview is off, Viewer is selected, or the browser tab is hidden. Worker writes
+expire within three seconds after the last visible preview stops polling. Simulations
+never wait for rendering. This requires a newly started test; older/running processes
+started before the feature was added cannot publish poses. A completed test retains
+its last sampled pose when one was captured, separately from full trial playback.
+
+New runs update their progress, extrema, histograms and trial explorer as results
+arrive. The UI polls every 1.5 seconds. **Stop test** stops
+the active dashboard run in the current mode, or the selected running analysis if
+there is no active dashboard job. Active trials finish and completed results are
+retained. Closing the browser does not cancel workers. Advanced settings also allow
+custom restrained poses, worker count, seed, and full histories for playback.
+The native legacy campaign convergence plot remains available through `watch` / `--live`.
+
+### Free motion
+
+For an aggressive extreme-load search, use:
+
+```bash
+.venv/bin/python -m arm_design.cli campaign \
+  --config robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml \
+  --aggressive --samples 20000 --search-steps 8 --iterations 0 \
+  --min-duration .1 --max-duration 2 --workers 8 --seed 17 \
+  --full-history --out results/aggressive
+```
+
+This runs 1,250 independent random collision-free pose pairs in both directions,
+with eight duration attempts per direction (20,000 total **attempts**, including
+rejected attempts). Each direction starts at rest. Valid durations are shortened;
+a failure then triggers geometric bisection between a failed and a valid duration.
+If the initial baseline fails, faster attempts are recorded without claiming a
+valid bracket. This is a finite search, not a time-optimal controller or a proof
+of the absolute worst load. Trials preserve their pair, direction and search step.
+
+Aggressive mode uses PD plus MuJoCo inverse-dynamics acceleration/velocity/gravity
+feedforward, all **inside** the existing derated speed-dependent actuator torque
+caps. This represents a model-based controller; ordinary campaigns retain their
+original controller. The sweep is a smooth quintic with acceleration and braking,
+followed by a 0.25 s hold; both directions are separate runs, not a continuous reversal.
+Torque saturation is allowed. New aggressive campaigns require tracking within
+`sweep.tracking_tolerance_deg` throughout sweep/hold (5° for the right arm), and
+all recorded final joint speeds must be at most 20°/s. The whole sweep and hold
+must complete. Starting-pose sag remains diagnostic; sweep tracking is still checked.
+Collision, joint-limit activation and overspeed stop recording before the offending
+sample and reject the **entire trial**. Numerical or recording failures also reject
+the entire trial. Recorded prefixes remain inspectable but do not contribute to
+accepted extrema or histograms. Runner shows the acceptance policy and motion
+diagnostics. These rules apply to newly started aggressive campaigns; saved runs,
+including relaxed `motor_loads_v1` runs with accepted partial trials, retain their
+original policy and results. Ordinary random/restrained rules are unchanged.
+
+Aggressive screening uses a timestep no larger than 0.5 ms. By default on the CLI, after the search,
+record-setting trials are rerun at half and quarter that timestep;
+`timestep-validation.json` preserves those results separately from the screening
+peaks, with acceptance changes and convergence summarized for review.
+
+The dashboard labels aggressive runs and shows peak motor utilization per trial.
+Histogram frequency reflects adaptive test coverage, not a measured duty cycle.
+The final export automatically includes per-part CSV cases for all signed component
+minima/maxima and force/moment magnitude maxima. `validation-summary.json` records
+sample-count checks, torque utilization, rejection reasons and FEA balance residuals.
+The source URDF hash and controller settings are saved with each run. Cancel safely
+by creating `CANCEL` in the run folder or using the dashboard cancel button.
+
+
+```bash
+.venv/bin/python -m arm_design.cli campaign \
+  --config robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml \
+  --samples 200 --iterations 0 --workers 4 --out results/free
+```
+
+**Campaigns ignore saved A/B poses.** All initial trials use random start/end joint
+angles and log-uniform durations (default 0.1–5 seconds). At least one random sample
+is required. Each trial starts at rest; only sweep and hold samples are measured.
+`--iterations 20` enables an additional peak-seeking refinement stage. The dashboard
+default is zero refinement; the existing CLI default remains 20. Random and refinement
+statistics are separate, so optimization does not silently distort an operating
+histogram. In ordinary random mode, failed tracking and colliding motions remain inspectable but do not enter
+accepted statistics unless tracking failures are explicitly allowed by `--include-failed`.
+These distributions describe random exploration, not a measured drumming duty cycle.
+Drum strikes/rebound and a task-weighted motion generator are outside this experiment.
+
+### Restrained hand: torque enumeration
+
+```bash
+.venv/bin/python -m arm_design.cli restrained \
+  --config robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml \
+  --poses 3 --trial-duration .5 --torque-ramp .05 --workers 4 \
+  --out results/restrained
+```
+
+For each collision-free pose, the hand's **position and orientation** are welded to
+world at their initial values. Internal elbow motion is allowed. Every motor receives
+one of `-peak`, `0`, `+peak`: 2,187 combinations per seven-joint pose. Each trial resets
+to rest independently; trials are not a continuous torque sequence. Zero means zero
+actuator command, with no PD or gravity compensation. Gravity/passive forces remain.
+Full peak torque is used at zero speed, with the configured speed envelope as the
+arm moves. A smooth ramp avoids an instantaneous commanded torque jump.
+
+Defaults are three independent random poses, 0.5 s per trial and a 0.05 s ramp.
+These durations are screening assumptions, not vendor peak-duration specifications.
+Supply `--poses-file poses.json` to use a JSON array of joint-angle arrays in degrees;
+the dashboard accepts the same array directly. Each pose has its own clamp location:
+this does not solve inverse kinematics for multiple poses at one shared grasp.
+`--max-trials N` is available for smoke tests and marks the run **partial**.
+
+The weld is a numerical compliant constraint, not measured gripper compliance or a
+slip model. `--clamp-time-constant` defaults to 0.005 s (at least two timesteps).
+`--clamp-position-tolerance` / `--clamp-angle-tolerance` default to 0.005 m / 0.05 rad.
+Excess drift, self/floor collision, joint-limit contact and instability reject a trial;
+its recorded prefix and rejection reason remain available under the rejected filter.
+Joint-stop impact strength is not characterized by the accepted dataset. Review rejected
+counts and solver/timestep sensitivity before interpreting maxima. There is no artificial
+cap on clamp reaction in this dynamic experiment; the older static `bounds` force/moment
+caps are a separate experiment. Results are maxima found for these settings, not absolute
+hardware limits.
+
+### Distribution and export conventions
+
+New runs create `campaign-*/` or `restrained-*/` directories with:
+
+- `run.json`: atomically updated status, settings, source revision and running maxima.
+- `metadata.json`, `config.yaml`, `model.mjb`, `source_model.xml`: frame/model snapshots.
+- `trials.sqlite`: transactionally published trial index, inputs and rejection reasons.
+- `trials/<id>/distribution.npz`: exact counts in shared signed logarithmic bins,
+  including explicit underflow/overflow, plus sums, sums of squares and extrema.
+- `trials/<id>/trace.npz`: up to 120 sampled frames per accepted trial by default.
+  Preview loads, torques and caps use float32; times and poses use float64. Rejected
+  trials keep diagnostics, inputs, extrema and distributions, but no preview.
+- `trials/<id>/cases.json.gz`: exact simultaneous snapshots behind the **current global**
+  accepted component/magnitude extrema. Superseded snapshots are pruned; these files
+  do not contain every trial's extrema. All trials still retain exact extrema values.
+- `trials/<id>/detail/`: full histories and all trial extrema generated on request.
+  In the Viewer select a trial, click **Generate full recording**, wait for verification,
+  then click **Play trial**. This explicitly re-simulates that trial from the saved
+  compiled model/config and checks acceptance, sample counts, histogram counts and
+  floating statistics before publishing it. Original results are never overwritten.
+  Regeneration needs the original MuJoCo version and compatible controller/collision
+  assets; a mismatch is reported instead of silently substituting different results.
+- `--full-history` (Runner advanced setting **Save all full histories**) opts into the
+  previous archival behavior, including full traces and snapshots for rejected trials.
+  Compact storage is the default for new runs; existing runs are unchanged.
+- `fea-*/`: normal FEA export of global extrema from accepted trials, when any exist.
+  Its `model.mjb` is a hard link to the run model: one physical model copy per run.
+  Copying exports to another filesystem may expand hard links into separate copies.
+
+Compact storage changes saved previews and snapshot retention, not simulation,
+acceptance rules, all-sample histogram counts, sums, sums of squares or extrema.
+Preview peak labels explicitly indicate when the exact selected trial snapshot is
+not retained. Regeneration is also available without the dashboard:
+
+```bash
+.venv/bin/python -m arm_design.trial_recording results/campaign-TIMESTAMP 42
+```
+
+The retained snapshot count is bounded by twice the number of connections times
+eight metrics. Per-trial summaries/distributions and accepted previews still grow
+linearly with trial count; storage is not constant. Full recordings generated on
+request add storage for those selected trials.
+
+The **Simulated time** histogram uses every recorded fixed-timestep sample, not the
+preview trace. Mean/RMS are exact for those samples; P95 is reported as a bin interval.
+**One peak per trial** counts one selected extreme per trial: it measures test coverage,
+not real-world occurrence probability. Signed components use the selected minimum,
+maximum, or largest absolute value with its sign; magnitudes use the maximum. Refinement and rejected prefixes remain
+in the saved data; the dashboard uses accepted trials from the experiment's main stage. Compare only identical robot/connection conventions; settings
+are visible in the assumptions panel. Older exports support peak/pose inspection but
+cannot provide missing historical distributions.
+
+`fea-cases --results <new-run-folder> --part l3` resolves the final FEA export. The
+handoff fixes one mate, applies the other mates/contact loads, includes gravity/inertia,
+and reports both force and moment balance residuals. CSVs include angular velocity and
+acceleration. Do not apply the fixed-mount reaction as an extra load. Material,
+mesh, actual face selection and structural solving remain in the FEA application.

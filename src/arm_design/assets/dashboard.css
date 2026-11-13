@@ -1,0 +1,98 @@
+:root{color-scheme:dark;font-family:Arial,sans-serif;color:#d9e5ef;background:#09121e}*{box-sizing:border-box}body{margin:0}header{padding:16px 24px;border-bottom:1px solid #26394a;background:linear-gradient(110deg,#102b35,#101b29)}.eyebrow{font-size:11px;letter-spacing:.2em;color:#25c9a3;font-weight:bold}h1{font-size:28px;letter-spacing:-1.5px;margin:9px 0}header p{color:#96aec3;margin:0}.workspace{display:grid;grid-template-columns:250px minmax(0,1fr)}aside{padding:24px 20px;border-right:1px solid #26394a;background:#0d1826}main{padding:16px;min-width:0}label{display:block;font-size:11px;letter-spacing:.08em;color:#91a8bd;margin:20px 0 8px}.status{background:#152b35;border-left:3px solid #25c9a3;padding:16px;font-size:14px}.note{font-size:12px;line-height:1.7;color:#99aec2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.js-plotly-plot{border:1px solid #26394a;border-radius:8px;overflow:hidden}button{cursor:pointer;border:1px solid #35516b;background:#1b3046;color:#e0edf7;border-radius:5px;padding:11px 14px;margin:12px 8px 8px 0;font-weight:600}button:hover{background:#29465f}.primary{background:#197b69;border-color:#25c9a3}input,textarea{width:100%;background:#152437;color:#dce8f3;border:1px solid #35516b;border-radius:4px;padding:9px;margin-bottom:8px}input[type=radio],input[type=checkbox]{width:auto}pre{white-space:pre-wrap;word-break:break-word;background:#101b29;border:1px solid #26394a;padding:16px;font-size:12px;line-height:1.65;max-height:460px;overflow:auto}details{border-top:1px solid #26394a;margin-top:20px;padding-top:18px}summary{cursor:pointer;font-size:13px;color:#b7cddd}.Select-control,.Select-menu-outer{background:#152437!important;color:#dce8f3!important}.Select-value-label,.Select-placeholder{color:#dce8f3!important}.Select-option{background:#152437!important;color:#dce8f3!important}h2{font-size:19px;margin:28px 0 8px}@media(max-width:900px){.grid{grid-template-columns:1fr}}@media(max-width:700px){.workspace{grid-template-columns:1fr}aside{border-right:0}header{padding:24px}main{padding:12px}}
+.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.grid>*{min-width:0}.dash-graph{min-width:0;width:100%}#scenario label{color:#d9e5ef!important;font-size:13px;letter-spacing:0}#scenario{color:#d9e5ef}#scenario input{accent-color:#25c9a3} [role=combobox]{background:#152437!important;color:#dce8f3!important;border-color:#35516b!important}[role=listbox],[role=option]{background:#152437!important;color:#dce8f3!important} [role=combobox] *{color:#dce8f3!important}:root{--Dash-Text-Primary:#dce8f3;--Dash-Text-Strong:#e8f3ff;--Dash-Text-Weak:#a4b8cc;--Dash-Text-Disabled:#91a1b3}@media(max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+:root{--Dash-Fill-Interactive-Strong:#152437;--Dash-Fill-Interactive-Weak:#152437;--Dash-Fill-Primary-Active:#29566a;--Dash-Fill-Primary-Hover:#20384e;--Dash-Fill-Inverse-Strong:#101b29;--Dash-Fill-Disabled:#172638;--Dash-Stroke-Strong:#35516b;--Dash-Stroke-Weak:#26394a}aside [role=combobox]{font-size:12px}aside [role=listbox]{color:#dce8f3!important}
+.dash-graph{height:260px;min-height:0;max-height:260px;overflow:hidden}
+
+/* Bound the Plotly canvas independently of surrounding grid/sidebar height. */
+.dash-graph .js-plotly-plot,.dash-graph .plot-container{height:100%!important;max-height:260px}#links{margin-top:12px}.grid{align-items:start}
+.link-picker{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 20px}.link-picker label{display:flex;align-items:center;gap:7px;margin:0;padding:10px 14px;border:1px solid #35516b;border-radius:6px;font-size:13px;letter-spacing:0;cursor:pointer;background:#101b29;color:#d9e5ef}.link-picker label:has(input:checked){border-color:#25c9a3;background:#163d3c;color:#e7fff9}.link-picker input{margin:0;accent-color:#25c9a3}.link-summary{overflow-x:auto;margin-bottom:14px}.link-summary table{width:100%;border-collapse:collapse;font-size:12px}.link-summary th,.link-summary td{padding:10px;text-align:left;border:1px solid #26394a;white-space:nowrap}.link-summary th{background:#1c3045}.link-summary td{background:#101b29}
+
+.chart-controls{max-width:540px;margin:16px 0 8px}.chart-controls label{margin-top:0}.chart-controls .note{margin-bottom:0}
+.fea-view{margin:12px 0}.fea-view #pose{height:340px;max-height:340px}.fea-view #pose .js-plotly-plot,.fea-view #pose .plot-container{max-height:340px}
+
+.fea-overview{display:grid;grid-template-columns:minmax(300px,2fr) minmax(0,3fr);gap:16px;align-items:start;margin:12px 0}.fea-overview .fea-view{margin:0}.fea-overview .link-summary{margin:0}.fea-overview .fea-mate{margin:0 0 10px;font-size:13px;font-weight:600}.fea-overview td{font-variant-numeric:tabular-nums;text-align:right}.fea-overview .note{margin-bottom:0}@media(max-width:1050px){.fea-overview{grid-template-columns:minmax(0,1fr)}}
+.load-value{display:block;width:100%;padding:2px 0;margin:0;border:0;border-radius:2px;background:transparent;color:inherit;font:inherit;text-align:right;text-decoration:underline dotted #6d8b9c;text-underline-offset:4px}.load-value:hover,.load-value:focus-visible{background:#203e4a;color:#fff;outline:1px solid #25c9a3}.load-preview-popover{position:fixed;z-index:10000;pointer-events:none;width:388px;max-width:calc(100vw - 16px);padding:12px;background:#101b29;color:#d9e5ef;border:1px solid #587083;border-radius:8px;box-shadow:0 8px 32px #0009;font-size:12px;line-height:1.5}.load-preview-popover strong,.load-preview-popover small{display:block}.load-preview-popover small{color:#a4b8cc;margin-top:5px}.load-preview-popover img{display:block;width:100%;height:155px;object-fit:contain;margin:4px 0}.preview-statistics{font-variant-numeric:tabular-nums;color:#fff}#histogram-section{scroll-margin-top:16px}#histogram{height:320px;max-height:320px}#histogram .js-plotly-plot,#histogram .plot-container{max-height:320px}
+.trial-replay{border:1px solid #35516b;border-radius:8px;padding:14px;margin:8px 0 16px;background:#101b29}.replay-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.replay-toolbar button{margin:0}.replay-toolbar label{display:flex;align-items:center;gap:8px;margin:0;letter-spacing:0}.replay-toolbar select{background:#152437;color:#dce8f3;border:1px solid #35516b;padding:8px;border-radius:4px}.replay-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px}.replay-viewport{height:360px;min-width:0;overflow:hidden;border:1px solid #26394a;border-radius:6px}.replay-viewport canvas{display:block;width:100%;height:100%}.replay-readout{max-height:360px;overflow:auto}.replay-readout h3{font-size:13px;color:#25c9a3;margin:8px 0}.replay-readout table{width:100%;border-collapse:collapse;font-size:12px}.replay-readout th,.replay-readout td{padding:5px 8px;border-bottom:1px solid #26394a;text-align:left}.replay-readout td{text-align:right;font-variant-numeric:tabular-nums}.replay-clock{font-size:13px;font-variant-numeric:tabular-nums}.trial-replay input[type=range]{accent-color:#25c9a3;padding:0;margin:8px 0}.replay-warning{color:#ffb45b;font-size:13px}button:disabled{opacity:.5;cursor:default}@media(max-width:1050px){.replay-layout{grid-template-columns:minmax(0,1fr)}.replay-readout{display:flex;flex-wrap:wrap;gap:8px;max-height:260px}.replay-readout table{flex:1;min-width:220px}}
+#trial-player{scroll-margin-top:16px}.trial-replay{scroll-margin-top:16px}
+.run-setup{margin:20px 0;padding:14px 0;border-top:1px solid #35516b;border-bottom:1px solid #35516b}.run-setup h2{margin:0 0 10px}.run-setup .note{font-size:11px}.run-setup details{margin-top:12px;padding-top:12px}.run-setup textarea{min-height:65px}.triple-input{display:flex;gap:5px}.triple-input input{min-width:0;width:33.33%}#run-progress{display:block;width:100%;height:8px;margin:8px 0;accent-color:#25c9a3}#launch-status,#job-status,#cancel-status{overflow-wrap:anywhere}
+
+/* Runner and Viewer stay mounted so browsing never resets the live job. */
+.workspace-tabs{padding:0 20px;background:#0d1826;border-bottom:1px solid #26394a}
+.workspace-tab{max-width:180px;background:#0d1826!important;color:#96aec3!important;border:0!important;padding:14px 28px!important;font-weight:600}
+.workspace-tab-selected{color:#e8fff9!important;background:#15362f!important;border-bottom:3px solid #25c9a3!important}
+.runner-workspace{grid-template-columns:320px minmax(0,1fr)}
+.runner-workspace aside{padding:18px 20px}.runner-workspace main{padding:20px}
+#runner-scenario label{color:#d9e5ef;font-size:13px;letter-spacing:0;margin:10px 0}#runner-scenario input{accent-color:#25c9a3}
+#runner-settings{border:0;padding:0;margin:0;min-width:0}#runner-settings:disabled{opacity:.65;pointer-events:none}
+.runner-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.runner-heading h2{margin:0}.runner-heading button{margin:0 0 12px}
+.runner-counters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}
+.runner-counter{border:1px solid #26394a;border-radius:7px;background:#101b29;padding:14px}
+.runner-counter span{display:block;color:#96aec3;font-size:12px;margin-bottom:6px}.runner-counter strong{font-size:22px;font-variant-numeric:tabular-nums}
+#runner-progress{display:block;width:100%;height:8px;margin:8px 0;accent-color:#25c9a3}
+#runner-extremes{height:340px;max-height:340px}#runner-extremes .js-plotly-plot,#runner-extremes .plot-container{max-height:340px}
+.runner-table td{text-align:right;font-variant-numeric:tabular-nums}.runner-table th{font-size:12px}
+.runner-table .new-record{animation:record-flash 2.5s ease-out}
+@keyframes record-flash{from{background:#25775d;color:#fff}to{background:#101b29;color:#cbd8e5}}
+@media(prefers-reduced-motion:reduce){.runner-table .new-record{animation:none;outline:1px solid #25c9a3}}
+@media(max-width:850px){.runner-workspace{grid-template-columns:minmax(0,1fr)}.runner-counters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#live-arm-enabled label{font-size:13px;color:#cbd8e5;letter-spacing:0;margin:12px 0}#live-arm-enabled input{accent-color:#25c9a3}
+#runner-visuals{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
+#runner-visuals.has-preview{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
+#runner-arm{min-width:0;border:1px solid #26394a;border-radius:8px;background:#101b29;height:340px;overflow:hidden;padding:8px}
+.live-arm-toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:35px}.live-arm-toolbar button{padding:6px 10px;margin:0;white-space:nowrap}.live-arm-toolbar span{line-height:1.3}
+.live-arm-viewport{width:100%;height:260px;overflow:hidden}.live-arm-viewport canvas{display:block}#runner-arm>p{margin:5px 0;font-size:11px;line-height:1.4}
+@media(max-width:1100px){#runner-visuals.has-preview{grid-template-columns:minmax(0,1fr)}}
+
+/* Compact desktop Runner: controls, live plots and link values share one screen. */
+.runner-active header{display:none}
+.runner-active .workspace-tab{padding:9px 24px!important}
+.runner-workspace{grid-template-columns:280px minmax(0,1fr)}
+.runner-workspace aside,.runner-workspace main{padding:12px 16px}
+.runner-workspace h2{font-size:17px}
+.runner-workspace label{margin:10px 0 4px;font-size:11px;letter-spacing:.03em}
+.runner-workspace input{padding:6px 8px;margin-bottom:0}
+.runner-workspace .note{font-size:11px;line-height:1.4;margin:6px 0}
+#runner-scenario{display:flex;gap:16px}#runner-scenario label{margin:5px 0;font-size:12px}
+.runner-workspace .run-setup{margin:12px 0 0;padding:10px 0;border-bottom:0}
+.runner-workspace .run-setup h2{margin:0 0 6px}
+.runner-workspace .run-setup details{margin-top:8px;padding-top:8px}
+.runner-input-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.runner-input-pair>*{min-width:0;width:100%}
+.runner-actions{display:flex;gap:8px;margin-top:8px}
+.runner-actions button{flex:1;margin:0;padding:9px 10px}
+.runner-heading button{padding:7px 12px;margin:0}
+#runner-status{padding:8px 12px;margin-top:8px;font-size:12px}
+#runner-progress{height:5px;margin:5px 0}
+.runner-counters{gap:8px;margin:7px 0}
+.runner-counter{padding:7px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.runner-counter span{font-size:11px;margin:0}.runner-counter strong{font-size:20px}
+#runner-config{overflow-wrap:anywhere}
+.runner-chart-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:6px 0}
+.runner-chart-toolbar .chart-controls{display:flex;align-items:center;gap:10px;margin:0;max-width:none;width:280px}
+.runner-chart-toolbar .chart-controls>label{margin:0;white-space:nowrap}
+.runner-chart-toolbar .chart-controls>div{flex:1;min-width:0}
+#live-arm-enabled label{margin:0;font-size:12px}
+.runner-workspace{--runner-plot-height:clamp(220px,calc(100dvh - 610px),340px)}
+#runner-extremes{height:var(--runner-plot-height);max-height:none}
+#runner-extremes .js-plotly-plot,#runner-extremes .plot-container{max-height:none}
+#runner-arm{height:var(--runner-plot-height);display:flex;flex-direction:column}
+.live-arm-toolbar{flex-shrink:0;min-height:28px;font-size:11px}
+.live-arm-toolbar button{font-size:11px;padding:5px 7px}
+.live-arm-viewport{flex:1;min-height:0;height:auto}
+#runner-arm>p{flex-shrink:0;font-size:10px;margin:3px 0 0}
+.runner-latest-heading{display:flex;align-items:center;gap:16px;margin:8px 0 5px}
+.runner-latest-heading h2,.runner-latest-heading .note{margin:0}
+#runner-table{margin:0}
+#runner-table th,#runner-table td{padding:5px 9px;font-size:11px}
+#runner-table th:first-child{width:25%}
+@media(min-width:1101px){
+ .runner-workspace .run-setup details[open]{position:absolute;z-index:20;left:280px;top:52px;width:340px;max-height:calc(100dvh - 75px);overflow:auto;padding:16px;background:#101b29;border:1px solid #35516b;border-radius:8px;box-shadow:0 8px 30px #0009}
+}
+@media(max-width:1100px){
+ .runner-workspace{--runner-plot-height:300px}
+ .runner-chart-toolbar{flex-wrap:wrap}
+ .runner-counter{display:block}.runner-counter span{margin-bottom:3px}
+}
+@media(max-width:850px){.runner-workspace{grid-template-columns:minmax(0,1fr)}}
+/* Dash's responsive graph also sets inline sizing; cap every canvas wrapper. */
+#runner-extremes,#runner-extremes .js-plotly-plot,#runner-extremes .plot-container{height:var(--runner-plot-height)!important;max-height:var(--runner-plot-height)!important;min-height:0}

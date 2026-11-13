@@ -8,7 +8,7 @@ import mujoco
 import numpy as np
 import yaml
 
-from .config import load_config, positive, vector
+from .config import header, load_config, portable, positive, vector
 
 
 def resolve_asset(filename, urdf_path, package_roots=(), meshdir=''):
@@ -209,6 +209,7 @@ def prepare_urdf_config(path, package_roots=()):
                  motors={}, joints=[],
                  drive=dict(torque_derating=1., speed_envelope=False, gravity_compensation=True),
                  simulation=dict(step_s=.001, contacts=False, floor_z_m=-.05),
+                 fea=dict(exclude_bodies=[]),
                  sweep=dict(a_deg=[], b_deg=[], duration_s=3., approach_s=2., settle_s=1., hold_s=1.,
                             tracking_tolerance_deg=2., jog_speed_deg_s=30.))
         for name, info in joints:
@@ -225,9 +226,10 @@ def prepare_urdf_config(path, package_roots=()):
             c['sweep']['b_deg'].append(initial)
     from .model import build_arm
     build_arm(c)  # Don't leave a settings file behind for an invalid import.
-    serialized = '# Controls for an imported URDF. Angles are degrees; source URDF uses SI units.\n'
-    serialized += '# Geometry/inertia live in the URDF. Reload YAML reimports it.\n'
-    serialized += yaml.safe_dump(c, sort_keys=False)
+    # Keep a curated file's own comments; only new files get the generic header.
+    serialized = header(settings, '# Controls for an imported URDF. Angles are degrees; source URDF uses SI units.\n'
+                                  '# Geometry/inertia live in the URDF. Reload YAML reimports it.\n')
+    serialized += yaml.safe_dump(portable(c, settings), sort_keys=False)
     if not settings.exists() or load_config(settings) != c:
         temporary = settings.with_suffix('.yaml.tmp')
         temporary.write_text(serialized)
@@ -274,6 +276,8 @@ def build_urdf_arm(c):
         peak = c['drive']['torque_derating'] * c['motors'][j['motor']]['peak_torque_nm']
         element(actuators, 'position', joint=j['name'], kp=j['kp_nm_rad'], kv=j['kd_nm_s_rad'],
                 ctrlrange=np.deg2rad(j['limits_deg']), forcerange=[-peak, peak], gear=1)
+    from .payload import attach_payload
+    attach_payload(root, c)
     xml = ET.tostring(root, encoding='unicode')
     model = mujoco.MjModel.from_xml_string(xml)
     return Arm(c, model, xml, np.array([]))
