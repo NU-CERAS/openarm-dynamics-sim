@@ -74,6 +74,8 @@ def part_cases(folder, part, fixed=None, all_extremes=False):
         if s.get('contact_body') in body['bodies']:
             contact = dict(point=R.T@(np.array(s['contact_point_world_m'])-origin),
                            force=R.T@np.array(s['contact_force_on_arm_world_N']))
+            if 'contact_moment_on_arm_world_Nm' in s:
+                contact['moment'] = R.T@np.array(s['contact_moment_on_arm_world_Nm'])
             external = contact['force']
         else:
             # Each member's resultant is in its own frame; sum them in the part frame.
@@ -112,7 +114,9 @@ def report(folder, part, cases):
                          f"F {vec(r['load'][:3])}, M {vec(r['load'][3:])}")
         if c['contact']:
             where = 'at the COM (resultant)' if c['contact'].get('at_com') else 'at'
-            lines.append(f"  APPLY contact force {where} {vec(c['contact']['point'])}: F {vec(c['contact']['force'])}")
+            moment = c['contact'].get('moment', np.zeros(3))
+            lines.append(f"  APPLY contact {'load' if np.any(moment) else 'force'} {where} {vec(c['contact']['point'])}: "
+                         f"F {vec(c['contact']['force'])}" + (f", M {vec(moment)}" if np.any(moment) else ''))
         if c['delta']:
             lines.append(f"  DELTA (sum of mate loads about the {c['delta']['other']} mate; do not apply, body loads carry it): "
                          f"F {vec(c['delta']['load'][:3])}, M {vec(c['delta']['load'][3:])}")
@@ -139,4 +143,4 @@ def write_csv(path, cases):
                 writer.writerow(common+['apply', r['other'], *r['point'], *r['load'], *body])
             if c['contact']:
                 writer.writerow(common+['apply contact', 'environment', *c['contact']['point'],
-                                        *c['contact']['force'], 0, 0, 0, *body])
+                                        *c['contact']['force'], *c['contact'].get('moment', (0, 0, 0)), *body])
