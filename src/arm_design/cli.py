@@ -11,13 +11,13 @@ def main():
     source.add_argument('--urdf',type=Path,help='Import a fixed-base rotary robot; creates <robot>.sim.yaml beside the URDF')
     p.add_argument('--package-root',type=Path,action='append',default=[],help='Folder containing ROS packages, or a package itself (repeatable; used with --urdf)')
     p.add_argument('--out',type=Path,default=ROOT/'results')
-    p.add_argument('--duration',type=float,help='A→B seconds (headless sweep only; viewer uses [/] or YAML)')
+    p.add_argument('--duration',type=float,help='A->B seconds (headless sweep only; viewer uses [/] or YAML)')
     p.add_argument('--direction',choices=['a-to-b','b-to-a'],default='a-to-b',
                    help='Direction for headless sweeps (default: a-to-b)')
     p.add_argument('--samples',type=int,help='Campaign: random A/B sweeps (default 200). Bounds: random poses (default 2000)')
-    p.add_argument('--iterations',type=int,help='Refinement steps per link force/moment (campaign default 20 sweeps, bounds 300 poses)')
-    p.add_argument('--min-duration',type=float,default=.1,help='Campaign: shortest A→B seconds (default 0.1)')
-    p.add_argument('--max-duration',type=float,default=5.,help='Campaign: longest A→B seconds (default 5)')
+    p.add_argument('--iterations',type=int,help='Refinement steps per part mate/delta force and moment (campaign default 20 sweeps, bounds 300 poses)')
+    p.add_argument('--min-duration',type=float,default=.1,help='Campaign: shortest A->B seconds (default 0.1)')
+    p.add_argument('--max-duration',type=float,default=5.,help='Campaign: longest A->B seconds (default 5)')
     p.add_argument('--workers',type=int,help='Campaign: parallel processes (default: CPU count)')
     p.add_argument('--seed',type=int,default=0,help='Campaign: random seed')
     p.add_argument('--include-failed',action='store_true',help='Campaign: also count sweeps that exceed tracking tolerance (joint-stop impacts)')
@@ -27,9 +27,9 @@ def main():
     p.add_argument('--min-lever-m',type=float,default=.05,help='Bounds: nearest blocking point to a joint axis (default 0.05 m)')
     p.add_argument('--contacts',choices=['tip','all'],default='tip',help='Bounds: block only the tool tip (default) or also every moving body origin')
     p.add_argument('--max-contact-force-n',type=float,help='Bounds: design limit on the blocking force (default: motor-limited only)')
-    p.add_argument('--live',action='store_true',help='Campaign: open a live plot of peak loads every 10 counted sweeps (same as arm-sim watch)')
+    p.add_argument('--live',action='store_true',help='Campaign: open a live plot of peak loads and their Fx..Mz record states every 10 counted sweeps (same as arm-sim watch)')
     p.add_argument('--results',type=Path,help='fea-cases: a campaign fea-* folder or a bounds-* folder. watch: a progress/convergence CSV or a folder to search (default --out)')
-    p.add_argument('--part',help='fea-cases: the body to set up for FEA, e.g. part_3')
+    p.add_argument('--part',help='fea-cases: the structural part to set up for FEA, e.g. part_3 (a merged part goes by its root body)')
     p.add_argument('--fixed',help='fea-cases: connection to constrain (default: the proximal one, toward the base)')
     p.add_argument('--all-extremes',action='store_true',help='fea-cases: include every Fx..Mz extreme, not just peak force/moment magnitudes')
     args=p.parse_args()
@@ -95,9 +95,8 @@ def main():
         print(f'{"interface":32} {"max force N":>12} {"max moment Nm":>14}  sweeps')
         f,mo=METRICS.index('force_N'),METRICS.index('moment_Nm')
         for i,interface in enumerate(rec.interfaces):
-            if interface['sign']==1:
-                sweeps=[rec.rows[rec.max_index[i,k]]['sweep_id'] for k in (f,mo)]
-                print(f'{interface["label"]:32} {rec.maximum[i,f]:12.2f} {rec.maximum[i,mo]:14.2f}  {sweeps[0]}, {sweeps[1]}')
+            sweeps=[rec.rows[rec.max_index[i,k]]['sweep_id'] for k in (f,mo)]
+            print(f'{interface["label"]:32} {rec.maximum[i,f]:12.2f} {rec.maximum[i,mo]:14.2f}  {sweeps[0]}, {sweeps[1]}')
         print(folder)
         return
     if args.command=='bounds':
@@ -115,9 +114,8 @@ def main():
         f,mo=OBJECTIVES
         print(f'{"interface":28} {"gravity N":>10} {"gravity Nm":>11} {"blocked N":>10} {"blocked Nm":>11}')
         for i,interface in enumerate(recs['gravity'].interfaces):
-            if interface['sign']==1:
-                print(f'{interface["label"]:28} {recs["gravity"].maximum[i,f]:10.1f} {recs["gravity"].maximum[i,mo]:11.2f} '
-                      f'{recs["blocked"].maximum[i,f]:10.1f} {recs["blocked"].maximum[i,mo]:11.2f}')
+            print(f'{interface["label"]:28} {recs["gravity"].maximum[i,f]:10.1f} {recs["gravity"].maximum[i,mo]:11.2f} '
+                  f'{recs["blocked"].maximum[i,f]:10.1f} {recs["blocked"].maximum[i,mo]:11.2f}')
         print(folder)
         return
     if args.command=='export':

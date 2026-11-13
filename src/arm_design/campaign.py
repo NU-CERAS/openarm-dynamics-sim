@@ -1,4 +1,4 @@
-"""Search A -> B sweeps for the largest interface loads; MuJoCo still runs every sweep."""
+"""Search A -> B sweeps for the largest part mate and delta loads; MuJoCo still runs every sweep."""
 from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 import csv
@@ -16,7 +16,7 @@ from .model import build_arm
 from .reporting import summary
 from .simulation import Sweep
 
-# Magnitudes are identical on both receiving-body views, so refine one side only.
+# Every reported row (each part's mates and delta) is refined on both magnitudes.
 OBJECTIVES = (METRICS.index('force_N'), METRICS.index('moment_Nm'))
 _arm = None
 _include_failed = False
@@ -87,7 +87,7 @@ def score(result, interface, metric):
 
 
 def _refine(job):
-    """(1+1) evolution strategy on one interface/metric, from its best sweep so far."""
+    """(1+1) evolution strategy on one row/metric, from its best sweep so far."""
     a, b, duration = (np.array(job[k], float) for k in ('a_deg', 'b_deg', 'duration_s'))
     lo, hi = job['limits_deg'][:, 0], job['limits_deg'][:, 1]
     rng = np.random.default_rng(job['seed'])
@@ -113,7 +113,7 @@ def _refine(job):
 
 
 class Peaks:
-    """Running per-interface extrema across sweeps, keeping only the samples behind them."""
+    """Running per-row extrema across sweeps, keeping only the samples behind them."""
     def __init__(self, shape):
         self.minimum = np.full(shape, np.inf)
         self.maximum = np.full(shape, -np.inf)
@@ -216,15 +216,18 @@ def campaign(cfg, out, samples=200, iterations=20, duration_range=(.1, 5.), work
     interfaces = recorder.interfaces
     peaks = Peaks((len(interfaces), len(METRICS)))
     sweeps, best = [], {}
-    targets = [(i, j) for i, f in enumerate(interfaces) if f['sign'] == 1 for j in OBJECTIVES]
+    targets = [(i, j) for i in range(len(interfaces)) for j in OBJECTIVES]
     started = time.monotonic()
     Path(out).mkdir(parents=True, exist_ok=True)
     progress = (Path(out)/PROGRESS).open('w', newline='')
     progress_csv, counted = csv.writer(progress), 0
-    progress_csv.writerow(['counted', 'sweeps', 'elapsed_s', 'stage', *(f'{interfaces[i]["label"]}|{METRICS[j]}' for i, j in targets)])
+    # Per target: its peak magnitude, then the full local wrench of the sample that set it.
+    progress_csv.writerow(['counted', 'sweeps', 'elapsed_s', 'stage', *(f'{interfaces[i]["label"]}|{METRICS[j]}{c}'
+                           for i, j in targets for c in ('', *('|'+x for x in METRICS[:6])))])
 
     def snapshot(stage):
-        progress_csv.writerow([counted, len(sweeps), round(time.monotonic()-started, 1), stage, *(peaks.maximum[t] for t in targets)])
+        record = [x for t in targets for x in (peaks.maximum[t], *peaks.samples[tuple(peaks.max_source[t])]['loads_local'][t[0]])]
+        progress_csv.writerow([counted, len(sweeps), round(time.monotonic()-started, 1), stage, *record])
         progress.flush()
 
     def collect(results, stage):

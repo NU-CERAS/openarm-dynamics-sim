@@ -100,6 +100,11 @@ def validate_motion(c):
             raise ValueError(f'{k} must be between 0.1 and 120 seconds')
     positive(s['tracking_tolerance_deg'], 'tracking_tolerance_deg')
     positive(s['jog_speed_deg_s'], 'jog_speed_deg_s')
+    # Optional: body-name globs (actuators) that receive no FEA load rows.
+    fea = c.get('fea', {})
+    exclude = fea.get('exclude_bodies', []) if isinstance(fea, dict) else None
+    if not isinstance(exclude, list) or any(not isinstance(p, str) or not p for p in exclude):
+        raise ValueError("fea.exclude_bodies must be a list of body-name patterns, e.g. ['rs*']")
 
 
 def load_config(path=DEFAULT_CONFIG):

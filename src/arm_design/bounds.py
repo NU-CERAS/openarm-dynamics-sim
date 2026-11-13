@@ -25,7 +25,7 @@ _statics = None
 
 
 class Statics:
-    """Interface loads at rest (zero velocity and acceleration), optionally with a blocking force."""
+    """Part mate and delta loads at rest (zero velocity and acceleration), optionally with a blocking force."""
     def __init__(self, arm, derating=1., max_overlap_mm=0., min_lever_m=MIN_LEVER_M, contacts='tip', max_force_n=None):
         self.m, self.d = arm.model, mujoco.MjData(arm.model)
         self.min_lever_m = min_lever_m
@@ -214,8 +214,7 @@ def bounds(cfg, out, poses=2000, iterations=300, workers=None, seed=0, derating=
     best = {kind: Best(shape) for kind in KINDS}
     started = time.monotonic()
     chunks = [dict(seed=[seed, i], poses=n) for i, n in enumerate(np.diff(np.linspace(0, poses, workers*4+1).astype(int))) if n]
-    targets = [(kind, i, j) for kind in KINDS for i, f in enumerate(statics.rec.interfaces)
-               if f['sign'] == 1 for j in OBJECTIVES]
+    targets = [(kind, i, j) for kind in KINDS for i in range(shape[0]) for j in OBJECTIVES]
     rejected = 0
     context = multiprocessing.get_context('spawn')
     with ProcessPoolExecutor(workers, context, _init, (cfg, *options)) as pool:

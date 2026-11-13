@@ -12,7 +12,7 @@ from arm_design.config import ROOT, load_config
 from arm_design.experiment import Experiment
 from arm_design.fea import METRICS
 from arm_design.model import build_arm
-from arm_design.watch import read, rise_pct
+from arm_design.watch import draw, figure, read, rise_pct, series
 
 
 def quick_config():
@@ -64,8 +64,8 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
     folder, rec = campaign(c, tmp_path, samples=1, iterations=1, duration_range=(1., 1.5),
                            workers=1, seed=3, log=lambda *a, **k: None)
     sweeps = list(csv.DictReader((folder/'sweeps.csv').open()))
-    # Two saved sweeps + one random + one refinement per interface force/moment.
-    assert len(sweeps) == 3 + 2*sum(f['sign'] == 1 for f in rec.interfaces)
+    # Two saved sweeps + one random + one refinement per reported row (mate or delta) force/moment.
+    assert len(sweeps) == 3 + 2*len(rec.interfaces)
     assert [s['stage'] for s in sweeps[:3]] == ['saved', 'saved', 'random']
     cases = json.loads((folder/'load_cases.json').read_text())['samples']
     labels = [f['label'] for f in rec.interfaces]
@@ -90,11 +90,31 @@ def test_campaign_exports_load_cases_for_every_peak(tmp_path):
     counted = meta['campaign']['counted']
     assert list(values[:, 0]) == [*range(PROGRESS_EVERY, counted+1, PROGRESS_EVERY)][:len(values)-1] + [counted]
     assert stages[-1] == 'refine' and (folder.parent/PROGRESS).read_bytes() == (folder/'convergence.csv').read_bytes()
-    last = dict(zip([h for k, h in enumerate(head) if k != 3], values[-1]))
+    assert len(head) == 4 + 14*len(rec.interfaces)
+    logged = [dict(zip(head[4:], row[3:])) for row in values]
     for i, f in enumerate(rec.interfaces):
-        if f['sign'] == 1:
-            assert last[f['label']+'|force_N'] == pytest.approx(rec.maximum[i, METRICS.index('force_N')])
-    assert np.all(rise_pct(values[:, 3:]) >= 0)
+        for metric, part in (('force_N', slice(0, 3)), ('moment_Nm', slice(3, 6))):
+            key, j = f['label']+'|'+metric, METRICS.index(metric)
+            assert logged[-1][key] == pytest.approx(rec.maximum[i, j])
+            # The full wrench of the record-setting sample rides along with every logged peak.
+            for row in logged:
+                state = np.array([row[key+'|'+c] for c in METRICS[:6]])
+                assert np.linalg.norm(state[part]) == pytest.approx(row[key], rel=1e-12)
+            np.testing.assert_allclose(state, cases[rec.max_index[i, j]]['loads_local'][i], rtol=1e-12)
+    rows = series(head)
+    assert [r['label'] for r in rows] == labels and {r['kind'] for r in rows} == {'proximal', 'distal', 'delta'}
+    assert np.all(rise_pct(values[:, 3:][:, [r[m][0] for r in rows for m in METRICS[6:]]]) >= 0)
+    # The live figure draws from this file, from an older magnitude-only one, and past a half-written line.
+    import matplotlib
+    matplotlib.use('Agg')
+    fig, axes, tables = figure()
+    draw(folder/'convergence.csv', axes, tables)
+    assert any(t.get_text() == 'link1 delta' for t in tables[0].texts) and len(axes[0].lines) >= len(rows)
+    old = tmp_path/'old.csv'
+    old.write_text('counted,sweeps,elapsed_s,stage,b <- a|force_N,b <- a|moment_Nm\n10,12,1.0,random,5.0,2.0\n20,25,2.0,ref')
+    assert series(read(old)[0])[0]['force_N'] == (0, None) and len(read(old)[1]) == 1
+    draw(old, axes, tables)
+    assert any('older campaign' in t.get_text() for t in tables[1].texts)
 
 
 def yaml_unchanged(c):

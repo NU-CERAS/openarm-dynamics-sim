@@ -11,6 +11,7 @@ from arm_design.fea import METRICS
 from arm_design.model import build_arm
 
 CAD = ROOT/'robots/moving_asm/urdf/moving_asm.sim.yaml'
+RIGHT = ROOT/'robots/right_arm_assembly/urdf/right_arm_assembly.sim.yaml'
 
 
 @pytest.mark.parametrize('path', [ROOT/'configs/arm.yaml', CAD])
@@ -81,3 +82,27 @@ def test_fea_setup_balances_and_names_fixed_and_applied_faces(tmp_path):
     assert len(list(csv.DictReader((tmp_path/'setup.csv').open()))) == 2*len(cases)
     with pytest.raises(ValueError, match='cannot fix'):
         part_cases(folder/'blocked', 'part_3', 'world')
+    # Actuators are not parts, and never receive load rows.
+    with pytest.raises(ValueError, match='No structural part'):
+        part_cases(folder/'blocked', 'rs06')
+    assert not any(row['interface'].startswith('rs') for row in csv.DictReader((folder/'summary.csv').open()))
+
+
+def test_fea_setup_treats_the_merged_tool_as_one_part(tmp_path):
+    from arm_design.fea_cases import part_cases, report
+    folder, recs = bounds(load_config(RIGHT), tmp_path, poses=30, iterations=3, workers=2, max_force_n=100,
+                          log=lambda *a, **k: None)
+    mass = sum(recs['blocked'].model.body(n).mass[0] for n in ('base', 'screwon', 'drumstick'))
+    for kind in ('gravity', 'blocked'):
+        cases = part_cases(folder/kind, 'base')
+        assert cases
+        for c in cases:
+            assert c['fixed'] == 'rs00_2' and c['applied'] == [] and c['delta'] is None
+            assert c['bodies'] == ['base', 'screwon', 'drumstick'] and c['mass_kg'] == pytest.approx(mass)
+            # The tip is on the drumstick: its contact loads the merged part.
+            assert c['residual_n'] < 1e-9 and (c['contact'] is not None) == (kind == 'blocked')
+        assert 'One solid part: base + screwon + drumstick' in report(folder/kind, 'base', cases)
+    link = part_cases(folder/'blocked', 'l3')
+    assert all(c['delta'] is not None and c['residual_n'] < 1e-9 for c in link) and 'DELTA' in report(folder/'blocked', 'l3', link)
+    with pytest.raises(ValueError, match='No structural part'):
+        part_cases(folder/'blocked', 'drumstick')

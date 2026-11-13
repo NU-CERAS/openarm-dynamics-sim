@@ -4,6 +4,7 @@
 # Hardware limits mapped from moving_asm; J7 axis is reversed here, its +-70 deg range is symmetric.
 # Tool links base/screwon/drumstick use measured 0.151/0.065/0.043 lb with CAD COM and mass-scaled inertia.
 # Tip is the drumstick's tapered striking end on its axis (CAD mesh, -Y end), in the drumstick link frame.
+# fea.exclude_bodies: RobStride housings (rs*) get no FEA load rows; base+screwon+drumstick report as one part (base frame).
 # Joint angles in this file are degrees; URDF uses SI units.
 model_type: urdf
 name: Right arm CAD / RobStride / 7 links
@@ -123,6 +124,9 @@ simulation:
   step_s: 0.001
   contacts: false
   floor_z_m: -0.742
+fea:
+  exclude_bodies:
+  - rs*
 sweep:
   a_deg:
   - 0.0
